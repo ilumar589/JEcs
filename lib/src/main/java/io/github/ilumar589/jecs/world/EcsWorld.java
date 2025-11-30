@@ -248,7 +248,7 @@ public final class EcsWorld {
     }
 
     private Archetype getOrCreateArchetype(Set<Class<? extends Component>> types) {
-        ArchetypeKey key = new ArchetypeKey(types);
+        final var key = new ArchetypeKey(types);
         return archetypes.computeIfAbsent(key, k -> new Archetype(types));
     }
 
