@@ -27,56 +27,37 @@ class PerformanceTest {
     @Test
     void performanceAddComponents1000() {
         int count = 1_000;
-        List<Entity> entities = createEntitiesWithPosition(count);
-
-        long startTime = System.nanoTime();
-        for (Entity entity : entities) {
-            world.addComponent(entity, new Velocity(1.0f, 1.0f, 1.0f));
-        }
-        long endTime = System.nanoTime();
-
-        double elapsedMs = (endTime - startTime) / 1_000_000.0;
-        System.out.println("Adding " + count + " components took " + elapsedMs + " ms");
+        measureAddComponentPerformance(count);
     }
 
     @Test
     void performanceAddComponents10000() {
         int count = 10_000;
-        List<Entity> entities = createEntitiesWithPosition(count);
-
-        long startTime = System.nanoTime();
-        for (Entity entity : entities) {
-            world.addComponent(entity, new Velocity(1.0f, 1.0f, 1.0f));
-        }
-        long endTime = System.nanoTime();
-
-        double elapsedMs = (endTime - startTime) / 1_000_000.0;
-        System.out.println("Adding " + count + " components took " + elapsedMs + " ms");
+        measureAddComponentPerformance(count);
     }
 
     @Test
     void performanceAddComponents100000() {
         int count = 100_000;
-        List<Entity> entities = createEntitiesWithPosition(count);
-
-        long startTime = System.nanoTime();
-        for (Entity entity : entities) {
-            world.addComponent(entity, new Velocity(1.0f, 1.0f, 1.0f));
-        }
-        long endTime = System.nanoTime();
-
-        double elapsedMs = (endTime - startTime) / 1_000_000.0;
-        System.out.println("Adding " + count + " components took " + elapsedMs + " ms");
+        measureAddComponentPerformance(count);
     }
 
     @Test
     void performanceAddComponents1000000() {
         int count = 1_000_000;
+        measureAddComponentPerformance(count);
+    }
+
+    private void measureAddComponentPerformance(int count) {
         List<Entity> entities = createEntitiesWithPosition(count);
+        List<Velocity> velocities = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            velocities.add(new Velocity(1.0f, 1.0f, 1.0f));
+        }
 
         long startTime = System.nanoTime();
-        for (Entity entity : entities) {
-            world.addComponent(entity, new Velocity(1.0f, 1.0f, 1.0f));
+        for (int i = 0; i < count; i++) {
+            world.addComponent(entities.get(i), velocities.get(i));
         }
         long endTime = System.nanoTime();
 
@@ -88,52 +69,25 @@ class PerformanceTest {
 
     @Test
     void performanceRemoveComponents1000() {
-        int count = 1_000;
-        List<Entity> entities = createEntitiesWithPositionAndVelocity(count);
-
-        long startTime = System.nanoTime();
-        for (Entity entity : entities) {
-            world.removeComponent(entity, Velocity.class);
-        }
-        long endTime = System.nanoTime();
-
-        double elapsedMs = (endTime - startTime) / 1_000_000.0;
-        System.out.println("Removing " + count + " components took " + elapsedMs + " ms");
+        measureRemoveComponentPerformance(1_000);
     }
 
     @Test
     void performanceRemoveComponents10000() {
-        int count = 10_000;
-        List<Entity> entities = createEntitiesWithPositionAndVelocity(count);
-
-        long startTime = System.nanoTime();
-        for (Entity entity : entities) {
-            world.removeComponent(entity, Velocity.class);
-        }
-        long endTime = System.nanoTime();
-
-        double elapsedMs = (endTime - startTime) / 1_000_000.0;
-        System.out.println("Removing " + count + " components took " + elapsedMs + " ms");
+        measureRemoveComponentPerformance(10_000);
     }
 
     @Test
     void performanceRemoveComponents100000() {
-        int count = 100_000;
-        List<Entity> entities = createEntitiesWithPositionAndVelocity(count);
-
-        long startTime = System.nanoTime();
-        for (Entity entity : entities) {
-            world.removeComponent(entity, Velocity.class);
-        }
-        long endTime = System.nanoTime();
-
-        double elapsedMs = (endTime - startTime) / 1_000_000.0;
-        System.out.println("Removing " + count + " components took " + elapsedMs + " ms");
+        measureRemoveComponentPerformance(100_000);
     }
 
     @Test
     void performanceRemoveComponents1000000() {
-        int count = 1_000_000;
+        measureRemoveComponentPerformance(1_000_000);
+    }
+
+    private void measureRemoveComponentPerformance(int count) {
         List<Entity> entities = createEntitiesWithPositionAndVelocity(count);
 
         long startTime = System.nanoTime();
@@ -150,46 +104,25 @@ class PerformanceTest {
 
     @Test
     void performanceQueryComponents1000() {
-        int count = 1_000;
-        createMixedEntities(count);
-
-        long startTime = System.nanoTime();
-        List<Entity> result = world.query(Position.class, Velocity.class);
-        long endTime = System.nanoTime();
-
-        double elapsedMs = (endTime - startTime) / 1_000_000.0;
-        System.out.println("Querying " + count + " entities took " + elapsedMs + " ms (found " + result.size() + " matches)");
+        measureQueryPerformance(1_000);
     }
 
     @Test
     void performanceQueryComponents10000() {
-        int count = 10_000;
-        createMixedEntities(count);
-
-        long startTime = System.nanoTime();
-        List<Entity> result = world.query(Position.class, Velocity.class);
-        long endTime = System.nanoTime();
-
-        double elapsedMs = (endTime - startTime) / 1_000_000.0;
-        System.out.println("Querying " + count + " entities took " + elapsedMs + " ms (found " + result.size() + " matches)");
+        measureQueryPerformance(10_000);
     }
 
     @Test
     void performanceQueryComponents100000() {
-        int count = 100_000;
-        createMixedEntities(count);
-
-        long startTime = System.nanoTime();
-        List<Entity> result = world.query(Position.class, Velocity.class);
-        long endTime = System.nanoTime();
-
-        double elapsedMs = (endTime - startTime) / 1_000_000.0;
-        System.out.println("Querying " + count + " entities took " + elapsedMs + " ms (found " + result.size() + " matches)");
+        measureQueryPerformance(100_000);
     }
 
     @Test
     void performanceQueryComponents1000000() {
-        int count = 1_000_000;
+        measureQueryPerformance(1_000_000);
+    }
+
+    private void measureQueryPerformance(int count) {
         createMixedEntities(count);
 
         long startTime = System.nanoTime();
