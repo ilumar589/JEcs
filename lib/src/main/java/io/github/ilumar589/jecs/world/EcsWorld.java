@@ -5,6 +5,7 @@ import io.github.ilumar589.jecs.entity.Entity;
 
 import java.util.*;
 import java.util.function.Consumer;
+import java.util.Comparator;
 
 /**
  * The main entry point for the ECS framework.
@@ -13,7 +14,7 @@ import java.util.function.Consumer;
 public final class EcsWorld {
     private int nextEntityId = 0;
     private final Map<Entity, Archetype> entityToArchetype;
-    private final Map<Set<Class<? extends Component>>, Archetype> archetypes;
+    private final Map<ArchetypeKey, Archetype> archetypes;
 
     /**
      * Creates a new empty ECS world.
@@ -248,6 +249,35 @@ public final class EcsWorld {
     }
 
     private Archetype getOrCreateArchetype(Set<Class<? extends Component>> types) {
-        return archetypes.computeIfAbsent(types, Archetype::new);
+        ArchetypeKey key = new ArchetypeKey(types);
+        return archetypes.computeIfAbsent(key, k -> new Archetype(types));
+    }
+
+    /**
+     * A key for the archetypes map that pre-computes and caches the hash code.
+     * Uses a sorted array for canonical representation and efficient equality checks.
+     */
+    private static final class ArchetypeKey {
+        private final Class<?>[] types;
+        private final int hash;
+
+        ArchetypeKey(Set<Class<? extends Component>> typeSet) {
+            this.types = typeSet.toArray(new Class<?>[0]);
+            Arrays.sort(this.types, Comparator.comparing(Class::getName));
+            this.hash = Arrays.hashCode(this.types);
+        }
+
+        @Override
+        public int hashCode() {
+            return hash;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            ArchetypeKey that = (ArchetypeKey) o;
+            return Arrays.equals(types, that.types);
+        }
     }
 }
