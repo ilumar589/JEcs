@@ -5,7 +5,6 @@ import io.github.ilumar589.jecs.entity.Entity;
 
 import java.util.*;
 import java.util.function.Consumer;
-import java.util.Comparator;
 
 /**
  * The main entry point for the ECS framework.
@@ -262,8 +261,8 @@ public final class EcsWorld {
         private final int hash;
 
         ArchetypeKey(Set<Class<? extends Component>> typeSet) {
-            this.types = typeSet.toArray(new Class<?>[0]);
-            Arrays.sort(this.types, Comparator.comparing(Class::getName));
+            this.types = typeSet.toArray(new Class<?>[typeSet.size()]);
+            Arrays.sort(this.types, (a, b) -> a.getName().compareTo(b.getName()));
             this.hash = Arrays.hashCode(this.types);
         }
 
