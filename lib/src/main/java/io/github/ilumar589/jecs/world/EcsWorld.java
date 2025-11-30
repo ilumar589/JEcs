@@ -1,6 +1,7 @@
 package io.github.ilumar589.jecs.world;
 
 import io.github.ilumar589.jecs.entity.Entity;
+import org.jspecify.annotations.Nullable;
 
 import java.util.*;
 import java.util.function.Consumer;
@@ -110,7 +111,7 @@ public final class EcsWorld {
      * @param <T> the component type
      * @return the component, or null if the entity doesn't have this component
      */
-    public <T> T getComponent(Entity entity, Class<T> type) {
+    public <T> @Nullable T getComponent(Entity entity, Class<T> type) {
         Archetype archetype = entityToArchetype.get(entity);
         if (archetype == null) {
             return null;

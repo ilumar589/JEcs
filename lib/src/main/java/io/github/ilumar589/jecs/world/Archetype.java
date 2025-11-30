@@ -1,6 +1,7 @@
 package io.github.ilumar589.jecs.world;
 
 import io.github.ilumar589.jecs.entity.Entity;
+import org.jspecify.annotations.Nullable;
 
 import java.util.*;
 
@@ -215,7 +216,7 @@ public final class Archetype {
      * @return the component, or null if not found
      */
     @SuppressWarnings("unchecked")
-    public <T> T getComponent(Entity entity, Class<T> type) {
+    public <T> @Nullable T getComponent(Entity entity, Class<T> type) {
         Integer index = entityToIndex.get(entity);
         if (index == null) {
             return null;
@@ -277,7 +278,7 @@ public final class Archetype {
      * @return the component store, or null if the type is not in this archetype
      */
     @SuppressWarnings("unchecked")
-    public <T> ComponentStore<T> getComponentStore(Class<T> type) {
+    public <T> @Nullable ComponentStore<T> getComponentStore(Class<T> type) {
         return (ComponentStore<T>) componentColumns.get(type);
     }
 
