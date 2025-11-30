@@ -1,7 +1,7 @@
 package io.github.ilumar589.jecs.world;
 
-import io.github.ilumar589.jecs.component.Component;
 import io.github.ilumar589.jecs.entity.Entity;
+import org.jspecify.annotations.Nullable;
 
 import java.util.*;
 
@@ -9,14 +9,68 @@ import java.util.*;
  * Represents an archetype - a unique combination of component types.
  * Entities with the same component types are stored together in the same archetype
  * for cache-efficient iteration.
- * <p>
- * Uses columnar storage: each component type has its own list, and all lists
- * share the same index for a given entity.
+ * 
+ * <h2>Storage Model: Struct-of-Arrays (SoA)</h2>
+ * Uses columnar storage: each component type has its own {@link ComponentStore},
+ * and all stores share the same index for a given entity. This Struct-of-Arrays
+ * layout provides:
+ * <ul>
+ *   <li><b>Cache locality:</b> Components of the same type are stored contiguously,
+ *       maximizing cache line utilization when iterating over a single component type</li>
+ *   <li><b>Reduced pointer indirection:</b> Array-based storage minimizes reference chasing</li>
+ *   <li><b>Efficient iteration:</b> Sequential memory access patterns leverage CPU prefetching</li>
+ * </ul>
+ * 
+ * <h2>Project Valhalla Readiness</h2>
+ * This implementation is fully ready for Project Valhalla's value types:
+ * <ul>
+ *   <li>No marker interface required - components are just plain records/classes</li>
+ *   <li>Value types can be stored flattened without interface overhead</li>
+ *   <li>Entity is already a record and a candidate for {@code value class} conversion</li>
+ *   <li>Component records can become value types with zero code changes</li>
+ * </ul>
+ * 
+ * <h2>Cache-Friendly Iteration Pattern</h2>
+ * For optimal performance when processing components:
+ * <pre>{@code
+ * // Get raw arrays for sequential access
+ * List<Entity> entities = archetype.getEntities();
+ * ComponentStore<Position> positions = archetype.getComponentStore(Position.class);
+ * Object[] posData = positions.getRawData();
+ * int size = positions.size();
+ * 
+ * for (int i = 0; i < size; i++) {
+ *     Position pos = (Position) posData[i];
+ *     Entity entity = entities.get(i);
+ *     // Process - sequential access maximizes cache hits
+ * }
+ * }</pre>
  */
 public final class Archetype {
-    private final Set<Class<? extends Component>> componentTypes;
+    /**
+     * Default initial capacity for component stores.
+     * Balances memory usage against reallocation overhead for typical use cases.
+     */
+    private static final int DEFAULT_INITIAL_CAPACITY = 16;
+    
+    private final Set<Class<?>> componentTypes;
+    
+    /**
+     * Stores entity references in insertion order.
+     * Entity IDs are stored near their component data indices for cache efficiency.
+     * 
+     * <h3>Valhalla Note</h3>
+     * When Entity becomes a value type, this could be stored as a primitive int[]
+     * for entity IDs, eliminating object headers and reference indirection.
+     */
     private final List<Entity> entities;
-    private final Map<Class<? extends Component>, List<Component>> componentColumns;
+    
+    /**
+     * Type-safe component storage using array-backed stores.
+     * Each store maintains contiguous memory for its component type.
+     */
+    private final Map<Class<?>, ComponentStore<?>> componentColumns;
+    
     private final Map<Entity, Integer> entityToIndex;
 
     /**
@@ -24,14 +78,26 @@ public final class Archetype {
      *
      * @param componentTypes the set of component types that define this archetype
      */
-    public Archetype(Set<Class<? extends Component>> componentTypes) {
+    public Archetype(Set<Class<?>> componentTypes) {
+        this(componentTypes, DEFAULT_INITIAL_CAPACITY);
+    }
+    
+    /**
+     * Creates a new archetype with a capacity hint for better memory pre-allocation.
+     * Use this constructor when the expected number of entities is known.
+     *
+     * @param componentTypes the set of component types that define this archetype
+     * @param initialCapacity hint for initial storage capacity
+     */
+    @SuppressWarnings("unchecked")
+    public Archetype(Set<Class<?>> componentTypes, int initialCapacity) {
         this.componentTypes = Set.copyOf(componentTypes);
-        this.entities = new ArrayList<>();
+        this.entities = new ArrayList<>(initialCapacity);
         this.componentColumns = new HashMap<>();
         this.entityToIndex = new HashMap<>();
 
-        for (Class<? extends Component> type : componentTypes) {
-            componentColumns.put(type, new ArrayList<>());
+        for (Class<?> type : componentTypes) {
+            componentColumns.put(type, new ComponentStore<>((Class<Object>) type, initialCapacity));
         }
     }
 
@@ -40,7 +106,7 @@ public final class Archetype {
      *
      * @return an unmodifiable set of component types
      */
-    public Set<Class<? extends Component>> getComponentTypes() {
+    public Set<Class<?>> getComponentTypes() {
         return componentTypes;
     }
 
@@ -79,7 +145,8 @@ public final class Archetype {
      * @param components the components for the entity (must match archetype's component types)
      * @throws IllegalArgumentException if components don't match archetype's types
      */
-    public void addEntity(Entity entity, Map<Class<? extends Component>, Component> components) {
+    @SuppressWarnings("unchecked")
+    public void addEntity(Entity entity, Map<Class<?>, Object> components) {
         if (entityToIndex.containsKey(entity)) {
             throw new IllegalArgumentException("Entity already exists in archetype: " + entity);
         }
@@ -94,7 +161,8 @@ public final class Archetype {
         entityToIndex.put(entity, index);
 
         for (var entry : components.entrySet()) {
-            componentColumns.get(entry.getKey()).add(entry.getValue());
+            ComponentStore<Object> store = (ComponentStore<Object>) componentColumns.get(entry.getKey());
+            store.add(entry.getValue());
         }
     }
 
@@ -106,24 +174,26 @@ public final class Archetype {
      * @return the components that were associated with the entity
      * @throws IllegalArgumentException if entity doesn't exist in this archetype
      */
-    public Map<Class<? extends Component>, Component> removeEntity(Entity entity) {
+    @SuppressWarnings("unchecked")
+    public Map<Class<?>, Object> removeEntity(Entity entity) {
         Integer index = entityToIndex.get(entity);
         if (index == null) {
             throw new IllegalArgumentException("Entity doesn't exist in archetype: " + entity);
         }
 
-        Map<Class<? extends Component>, Component> removedComponents = new HashMap<>();
+        Map<Class<?>, Object> removedComponents = new HashMap<>();
         int lastIndex = entities.size() - 1;
 
         for (var entry : componentColumns.entrySet()) {
-            List<Component> column = entry.getValue();
-            Component removedComponent = column.get(index);
+            ComponentStore<Object> store = (ComponentStore<Object>) entry.getValue();
+            Object removedComponent = store.get(index);
             removedComponents.put(entry.getKey(), removedComponent);
 
+            // Use swap-and-pop for efficient removal
             if (index != lastIndex) {
-                column.set(index, column.get(lastIndex));
+                store.set(index, store.get(lastIndex));
             }
-            column.remove(lastIndex);
+            store.removeSwapPop(lastIndex);
         }
 
         if (index != lastIndex) {
@@ -131,7 +201,7 @@ public final class Archetype {
             entities.set(index, lastEntity);
             entityToIndex.put(lastEntity, index);
         }
-        entities.remove(lastIndex);
+        entities.removeLast();
         entityToIndex.remove(entity);
 
         return removedComponents;
@@ -146,18 +216,18 @@ public final class Archetype {
      * @return the component, or null if not found
      */
     @SuppressWarnings("unchecked")
-    public <T extends Component> T getComponent(Entity entity, Class<T> type) {
+    public <T> @Nullable T getComponent(Entity entity, Class<T> type) {
         Integer index = entityToIndex.get(entity);
         if (index == null) {
             return null;
         }
 
-        List<Component> column = componentColumns.get(type);
-        if (column == null) {
+        ComponentStore<?> store = componentColumns.get(type);
+        if (store == null) {
             return null;
         }
 
-        return (T) column.get(index);
+        return (T) store.get(index);
     }
 
     /**
@@ -167,19 +237,20 @@ public final class Archetype {
      * @param component the component to set
      * @throws IllegalArgumentException if entity doesn't exist or component type not in archetype
      */
-    public void setComponent(Entity entity, Component component) {
+    @SuppressWarnings("unchecked")
+    public void setComponent(Entity entity, Object component) {
         Integer index = entityToIndex.get(entity);
         if (index == null) {
             throw new IllegalArgumentException("Entity doesn't exist in archetype: " + entity);
         }
 
-        Class<? extends Component> type = component.getClass();
-        List<Component> column = componentColumns.get(type);
-        if (column == null) {
+        Class<?> type = component.getClass();
+        ComponentStore<Object> store = (ComponentStore<Object>) componentColumns.get(type);
+        if (store == null) {
             throw new IllegalArgumentException("Component type not in archetype: " + type);
         }
 
-        column.set(index, component);
+        store.set(index, component);
     }
 
     /**
@@ -190,12 +261,25 @@ public final class Archetype {
      * @return an unmodifiable list of components of the specified type
      */
     @SuppressWarnings("unchecked")
-    public <T extends Component> List<T> getComponentColumn(Class<T> type) {
-        List<Component> column = componentColumns.get(type);
-        if (column == null) {
+    public <T> List<T> getComponentColumn(Class<T> type) {
+        ComponentStore<?> store = componentColumns.get(type);
+        if (store == null) {
             return Collections.emptyList();
         }
-        return Collections.unmodifiableList((List<T>) column);
+        return (List<T>) store.asList();
+    }
+    
+    /**
+     * Gets the raw component store for a specific type.
+     * For performance-critical iteration, use this to access the underlying array.
+     *
+     * @param type the component type
+     * @param <T> the component type
+     * @return the component store, or null if the type is not in this archetype
+     */
+    @SuppressWarnings("unchecked")
+    public <T> @Nullable ComponentStore<T> getComponentStore(Class<T> type) {
+        return (ComponentStore<T>) componentColumns.get(type);
     }
 
     @Override

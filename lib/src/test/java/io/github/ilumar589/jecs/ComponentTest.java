@@ -17,9 +17,9 @@ class ComponentTest {
     }
 
     @Test
-    void positionImplementsComponent() {
+    void positionIsRecord() {
         Position position = new Position(1.0f, 2.0f, 3.0f);
-        assertInstanceOf(Component.class, position);
+        assertInstanceOf(Record.class, position);
     }
 
     @Test
@@ -43,9 +43,9 @@ class ComponentTest {
     }
 
     @Test
-    void velocityImplementsComponent() {
+    void velocityIsRecord() {
         Velocity velocity = new Velocity(0.1f, 0.2f, 0.3f);
-        assertInstanceOf(Component.class, velocity);
+        assertInstanceOf(Record.class, velocity);
     }
 
     @Test
@@ -68,9 +68,9 @@ class ComponentTest {
     }
 
     @Test
-    void healthImplementsComponent() {
+    void healthIsRecord() {
         Health health = new Health(80, 100);
-        assertInstanceOf(Component.class, health);
+        assertInstanceOf(Record.class, health);
     }
 
     @Test

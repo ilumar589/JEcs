@@ -22,6 +22,9 @@ dependencies {
 
     // This dependency is used internally, and not exposed to consumers on their own compile classpath.
     implementation(libs.guava)
+    
+    // JSpecify nullness annotations for better null safety
+    api(libs.jspecify)
 }
 
 testing {

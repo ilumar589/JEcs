@@ -1,7 +1,7 @@
 package io.github.ilumar589.jecs.world;
 
-import io.github.ilumar589.jecs.component.Component;
 import io.github.ilumar589.jecs.entity.Entity;
+import org.jspecify.annotations.Nullable;
 
 import java.util.*;
 import java.util.function.Consumer;
@@ -9,6 +9,27 @@ import java.util.function.Consumer;
 /**
  * The main entry point for the ECS framework.
  * Manages entities, components, and archetypes.
+ * 
+ * <h2>Project Valhalla Readiness</h2>
+ * This ECS implementation is designed to be fully compatible with Project Valhalla:
+ * <ul>
+ *   <li>No marker interface required - components are just plain records/classes</li>
+ *   <li>Value types can be stored flattened without interface overhead</li>
+ *   <li>When Valhalla lands, records can become value types with zero code changes</li>
+ * </ul>
+ * 
+ * <h2>Design Decision: Object Parameters vs Type Bounds</h2>
+ * This API uses {@code Object} parameters instead of bounded generics like
+ * {@code T extends Component}. This is an intentional trade-off:
+ * <ul>
+ *   <li><b>Why:</b> Marker interfaces prevent value type flattening in Valhalla.
+ *       Value types implementing interfaces require object references, losing
+ *       cache locality and inline storage benefits.</li>
+ *   <li><b>Trade-off:</b> Compile-time type safety is reduced - any object can be
+ *       passed as a component. Use records/value types for components.</li>
+ *   <li><b>Best Practice:</b> Components should be immutable records with primitive
+ *       fields (e.g., {@code record Position(float x, float y, float z)}).</li>
+ * </ul>
  */
 public final class EcsWorld {
     private int nextEntityId = 0;
@@ -25,22 +46,27 @@ public final class EcsWorld {
 
     /**
      * Creates a new entity with the specified components.
+     * 
+     * <p>Components should be immutable records with primitive fields for best
+     * performance and Valhalla compatibility. Each component type should be unique
+     * per entity.</p>
      *
-     * @param components the initial components for the entity
+     * @param components the initial components for the entity (should be records)
      * @return the newly created entity
+     * @throws IllegalArgumentException if duplicate component types are provided
      */
-    public Entity createEntity(Component... components) {
+    public Entity createEntity(Object... components) {
         Entity entity = new Entity(nextEntityId++);
 
         if (components.length == 0) {
             return entity;
         }
 
-        Set<Class<? extends Component>> typeSet = new HashSet<>();
-        Map<Class<? extends Component>, Component> componentMap = new HashMap<>();
+        Set<Class<?>> typeSet = new HashSet<>();
+        Map<Class<?>, Object> componentMap = new HashMap<>();
 
-        for (Component component : components) {
-            Class<? extends Component> type = component.getClass();
+        for (Object component : components) {
+            Class<?> type = component.getClass();
             if (typeSet.contains(type)) {
                 throw new IllegalArgumentException("Duplicate component type: " + type);
             }
@@ -85,7 +111,7 @@ public final class EcsWorld {
      * @param <T> the component type
      * @return the component, or null if the entity doesn't have this component
      */
-    public <T extends Component> T getComponent(Entity entity, Class<T> type) {
+    public <T> @Nullable T getComponent(Entity entity, Class<T> type) {
         Archetype archetype = entityToArchetype.get(entity);
         if (archetype == null) {
             return null;
@@ -100,7 +126,7 @@ public final class EcsWorld {
      * @param type the component type
      * @return true if the entity has the component
      */
-    public boolean hasComponent(Entity entity, Class<? extends Component> type) {
+    public boolean hasComponent(Entity entity, Class<?> type) {
         Archetype archetype = entityToArchetype.get(entity);
         if (archetype == null) {
             return false;
@@ -111,25 +137,28 @@ public final class EcsWorld {
     /**
      * Adds a component to an entity.
      * This may move the entity to a different archetype.
+     * 
+     * <p>Components should be immutable records with primitive fields for best
+     * performance and Valhalla compatibility.</p>
      *
      * @param entity the entity
-     * @param component the component to add
+     * @param component the component to add (should be a record)
      * @throws IllegalArgumentException if the entity doesn't exist or already has this component type
      */
-    public void addComponent(Entity entity, Component component) {
+    public void addComponent(Entity entity, Object component) {
         Archetype oldArchetype = entityToArchetype.get(entity);
 
-        Set<Class<? extends Component>> newTypes = new HashSet<>();
-        Map<Class<? extends Component>, Component> componentMap = new HashMap<>();
+        Set<Class<?>> newTypes = new HashSet<>();
+        Map<Class<?>, Object> componentMap = new HashMap<>();
 
-        Class<? extends Component> newType = component.getClass();
+        Class<?> newType = component.getClass();
 
         if (oldArchetype != null) {
             if (oldArchetype.getComponentTypes().contains(newType)) {
                 throw new IllegalArgumentException("Entity already has component of type: " + newType);
             }
 
-            Map<Class<? extends Component>, Component> oldComponents = oldArchetype.removeEntity(entity);
+            Map<Class<?>, Object> oldComponents = oldArchetype.removeEntity(entity);
             newTypes.addAll(oldArchetype.getComponentTypes());
             componentMap.putAll(oldComponents);
         }
@@ -150,7 +179,7 @@ public final class EcsWorld {
      * @param type the component type to remove
      * @throws IllegalArgumentException if the entity doesn't exist or doesn't have this component
      */
-    public void removeComponent(Entity entity, Class<? extends Component> type) {
+    public void removeComponent(Entity entity, Class<?> type) {
         Archetype oldArchetype = entityToArchetype.get(entity);
 
         if (oldArchetype == null) {
@@ -161,13 +190,13 @@ public final class EcsWorld {
             throw new IllegalArgumentException("Entity doesn't have component of type: " + type);
         }
 
-        Map<Class<? extends Component>, Component> oldComponents = oldArchetype.removeEntity(entity);
+        Map<Class<?>, Object> oldComponents = oldArchetype.removeEntity(entity);
         oldComponents.remove(type);
 
         if (oldComponents.isEmpty()) {
             entityToArchetype.remove(entity);
         } else {
-            Set<Class<? extends Component>> newTypes = new HashSet<>(oldComponents.keySet());
+            Set<Class<?>> newTypes = new HashSet<>(oldComponents.keySet());
             Archetype newArchetype = getOrCreateArchetype(newTypes);
             newArchetype.addEntity(entity, oldComponents);
             entityToArchetype.put(entity, newArchetype);
@@ -177,12 +206,15 @@ public final class EcsWorld {
     /**
      * Sets (updates) a component on an entity.
      * The entity must already have a component of this type.
+     * 
+     * <p>Components should be immutable records with primitive fields for best
+     * performance and Valhalla compatibility.</p>
      *
      * @param entity the entity
-     * @param component the new component value
+     * @param component the new component value (should be a record)
      * @throws IllegalArgumentException if the entity doesn't have this component type
      */
-    public void setComponent(Entity entity, Component component) {
+    public void setComponent(Entity entity, Object component) {
         Archetype archetype = entityToArchetype.get(entity);
         if (archetype == null) {
             throw new IllegalArgumentException("Entity doesn't exist: " + entity);
@@ -197,8 +229,8 @@ public final class EcsWorld {
      * @return a list of entities that have all the specified components
      */
     @SafeVarargs
-    public final List<Entity> query(Class<? extends Component>... types) {
-        Set<Class<? extends Component>> requiredTypes = Set.of(types);
+    public final List<Entity> query(Class<?>... types) {
+        Set<Class<?>> requiredTypes = Set.of(types);
         List<Entity> result = new ArrayList<>();
 
         for (Archetype archetype : archetypes.values()) {
@@ -217,8 +249,8 @@ public final class EcsWorld {
      * @param types the required component types
      */
     @SafeVarargs
-    public final void forEach(Consumer<Entity> consumer, Class<? extends Component>... types) {
-        Set<Class<? extends Component>> requiredTypes = Set.of(types);
+    public final void forEach(Consumer<Entity> consumer, Class<?>... types) {
+        Set<Class<?>> requiredTypes = Set.of(types);
 
         for (Archetype archetype : archetypes.values()) {
             if (archetype.getComponentTypes().containsAll(requiredTypes)) {
@@ -247,7 +279,7 @@ public final class EcsWorld {
         return archetypes.size();
     }
 
-    private Archetype getOrCreateArchetype(Set<Class<? extends Component>> types) {
+    private Archetype getOrCreateArchetype(Set<Class<?>> types) {
         final var key = new ArchetypeKey(types);
         return archetypes.computeIfAbsent(key, k -> new Archetype(types));
     }
@@ -260,7 +292,7 @@ public final class EcsWorld {
         private final Class<?>[] types;
         private final int hash;
 
-        ArchetypeKey(Set<Class<? extends Component>> typeSet) {
+        ArchetypeKey(Set<Class<?>> typeSet) {
             this.types = typeSet.toArray(new Class<?>[typeSet.size()]);
             Arrays.sort(this.types, (a, b) -> a.getName().compareTo(b.getName()));
             this.hash = Arrays.hashCode(this.types);
