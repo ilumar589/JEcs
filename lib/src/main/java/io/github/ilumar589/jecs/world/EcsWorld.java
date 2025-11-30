@@ -16,6 +16,19 @@ import java.util.function.Consumer;
  *   <li>Value types can be stored flattened without interface overhead</li>
  *   <li>When Valhalla lands, records can become value types with zero code changes</li>
  * </ul>
+ * 
+ * <h2>Design Decision: Object Parameters vs Type Bounds</h2>
+ * This API uses {@code Object} parameters instead of bounded generics like
+ * {@code T extends Component}. This is an intentional trade-off:
+ * <ul>
+ *   <li><b>Why:</b> Marker interfaces prevent value type flattening in Valhalla.
+ *       Value types implementing interfaces require object references, losing
+ *       cache locality and inline storage benefits.</li>
+ *   <li><b>Trade-off:</b> Compile-time type safety is reduced - any object can be
+ *       passed as a component. Use records/value types for components.</li>
+ *   <li><b>Best Practice:</b> Components should be immutable records with primitive
+ *       fields (e.g., {@code record Position(float x, float y, float z)}).</li>
+ * </ul>
  */
 public final class EcsWorld {
     private int nextEntityId = 0;
@@ -32,9 +45,14 @@ public final class EcsWorld {
 
     /**
      * Creates a new entity with the specified components.
+     * 
+     * <p>Components should be immutable records with primitive fields for best
+     * performance and Valhalla compatibility. Each component type should be unique
+     * per entity.</p>
      *
-     * @param components the initial components for the entity
+     * @param components the initial components for the entity (should be records)
      * @return the newly created entity
+     * @throws IllegalArgumentException if duplicate component types are provided
      */
     public Entity createEntity(Object... components) {
         Entity entity = new Entity(nextEntityId++);
@@ -118,9 +136,12 @@ public final class EcsWorld {
     /**
      * Adds a component to an entity.
      * This may move the entity to a different archetype.
+     * 
+     * <p>Components should be immutable records with primitive fields for best
+     * performance and Valhalla compatibility.</p>
      *
      * @param entity the entity
-     * @param component the component to add
+     * @param component the component to add (should be a record)
      * @throws IllegalArgumentException if the entity doesn't exist or already has this component type
      */
     public void addComponent(Entity entity, Object component) {
@@ -184,9 +205,12 @@ public final class EcsWorld {
     /**
      * Sets (updates) a component on an entity.
      * The entity must already have a component of this type.
+     * 
+     * <p>Components should be immutable records with primitive fields for best
+     * performance and Valhalla compatibility.</p>
      *
      * @param entity the entity
-     * @param component the new component value
+     * @param component the new component value (should be a record)
      * @throws IllegalArgumentException if the entity doesn't have this component type
      */
     public void setComponent(Entity entity, Object component) {
