@@ -1,7 +1,5 @@
 package io.github.ilumar589.jecs.world;
 
-import io.github.ilumar589.jecs.component.Component;
-
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -15,20 +13,20 @@ import java.util.List;
  * This implementation uses {@code Object[]} internally for storage, but maintains 
  * type safety through generics at the API level. This approach:
  * <ul>
- *   <li>Reduces pointer indirection compared to {@code List<Component>}</li>
+ *   <li>No marker interface required - components are just plain records/classes</li>
  *   <li>Provides contiguous memory layout for better cache locality</li>
  *   <li>Pre-allocates capacity to reduce reallocations during entity additions</li>
- *   <li>Prepares for Project Valhalla value types migration</li>
+ *   <li>Fully prepared for Project Valhalla value types</li>
  * </ul>
  * 
- * <h2>Project Valhalla Migration Path</h2>
- * When Project Valhalla lands with value types (inline types), this class can be
- * updated to:
+ * <h2>Project Valhalla Readiness</h2>
+ * By not requiring components to implement an interface, this design is fully
+ * compatible with Valhalla's value types:
  * <ul>
- *   <li>Use specialized primitive arrays for primitive-like value types</li>
- *   <li>Take advantage of flattened object layouts where components are stored 
- *       inline rather than as references</li>
- *   <li>Implement {@code value class} semantics for the store itself</li>
+ *   <li>Value types can be stored flattened in arrays without interface overhead</li>
+ *   <li>No vtable dispatch or reference indirection through interface pointers</li>
+ *   <li>When Valhalla lands, records like {@code Position(float x, float y, float z)} 
+ *       can become value types with zero code changes</li>
  * </ul>
  * 
  * <h2>Cache-Friendly Iteration Pattern</h2>
@@ -45,7 +43,7 @@ import java.util.List;
  *
  * @param <T> the component type stored in this column
  */
-public final class ComponentStore<T extends Component> {
+public final class ComponentStore<T> {
     
     /**
      * Default initial capacity for new component stores.

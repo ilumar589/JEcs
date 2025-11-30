@@ -7,6 +7,7 @@ package io.github.ilumar589.jecs.component;
  * This component uses primitive float fields which will benefit from value type
  * optimizations when Project Valhalla lands:
  * <ul>
+ *   <li>No interface overhead - pure record that can become a value type</li>
  *   <li>All three velocity components are primitives (no boxing)</li>
  *   <li>Total size is 12 bytes (3 × 4 bytes for floats)</li>
  *   <li>Fits well within a single cache line (typically 64 bytes)</li>
@@ -32,5 +33,5 @@ package io.github.ilumar589.jecs.component;
  * @param dy the velocity along the y axis
  * @param dz the velocity along the z axis
  */
-public record Velocity(float dx, float dy, float dz) implements Component {
+public record Velocity(float dx, float dy, float dz) {
 }

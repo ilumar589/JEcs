@@ -7,6 +7,7 @@ package io.github.ilumar589.jecs.component;
  * This component uses primitive float fields which will benefit from value type
  * optimizations when Project Valhalla lands:
  * <ul>
+ *   <li>No interface overhead - pure record that can become a value type</li>
  *   <li>All three coordinates are primitives (no boxing)</li>
  *   <li>Total size is 12 bytes (3 × 4 bytes for floats)</li>
  *   <li>Fits well within a single cache line (typically 64 bytes)</li>
@@ -28,5 +29,5 @@ package io.github.ilumar589.jecs.component;
  * @param y the y coordinate
  * @param z the z coordinate
  */
-public record Position(float x, float y, float z) implements Component {
+public record Position(float x, float y, float z) {
 }

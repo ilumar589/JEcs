@@ -13,7 +13,7 @@ class ArchetypeTest {
 
     @Test
     void createArchetypeWithComponentTypes() {
-        Set<Class<? extends Component>> types = Set.of(Position.class, Velocity.class);
+        Set<Class<?>> types = Set.of(Position.class, Velocity.class);
         Archetype archetype = new Archetype(types);
 
         assertEquals(types, archetype.getComponentTypes());
@@ -22,12 +22,12 @@ class ArchetypeTest {
 
     @Test
     void addEntityToArchetype() {
-        Set<Class<? extends Component>> types = Set.of(Position.class);
+        Set<Class<?>> types = Set.of(Position.class);
         Archetype archetype = new Archetype(types);
 
         Entity entity = new Entity(1);
         Position position = new Position(1, 2, 3);
-        Map<Class<? extends Component>, Component> components = Map.of(Position.class, position);
+        Map<Class<?>, Object> components = Map.of(Position.class, position);
 
         archetype.addEntity(entity, components);
 
@@ -38,7 +38,7 @@ class ArchetypeTest {
 
     @Test
     void addMultipleEntitiesToArchetype() {
-        Set<Class<? extends Component>> types = Set.of(Position.class, Velocity.class);
+        Set<Class<?>> types = Set.of(Position.class, Velocity.class);
         Archetype archetype = new Archetype(types);
 
         Entity e1 = new Entity(1);
@@ -60,14 +60,14 @@ class ArchetypeTest {
 
     @Test
     void removeEntityFromArchetype() {
-        Set<Class<? extends Component>> types = Set.of(Position.class);
+        Set<Class<?>> types = Set.of(Position.class);
         Archetype archetype = new Archetype(types);
 
         Entity entity = new Entity(1);
         Position position = new Position(1, 2, 3);
         archetype.addEntity(entity, Map.of(Position.class, position));
 
-        Map<Class<? extends Component>, Component> removed = archetype.removeEntity(entity);
+        Map<Class<?>, Object> removed = archetype.removeEntity(entity);
 
         assertEquals(0, archetype.size());
         assertFalse(archetype.hasEntity(entity));
@@ -76,7 +76,7 @@ class ArchetypeTest {
 
     @Test
     void removeEntityFromMiddleOfArchetype() {
-        Set<Class<? extends Component>> types = Set.of(Position.class);
+        Set<Class<?>> types = Set.of(Position.class);
         Archetype archetype = new Archetype(types);
 
         Entity e1 = new Entity(1);
@@ -101,7 +101,7 @@ class ArchetypeTest {
 
     @Test
     void getComponentReturnsNullForNonexistentEntity() {
-        Set<Class<? extends Component>> types = Set.of(Position.class);
+        Set<Class<?>> types = Set.of(Position.class);
         Archetype archetype = new Archetype(types);
 
         Entity entity = new Entity(999);
@@ -110,7 +110,7 @@ class ArchetypeTest {
 
     @Test
     void getComponentReturnsNullForNonexistentType() {
-        Set<Class<? extends Component>> types = Set.of(Position.class);
+        Set<Class<?>> types = Set.of(Position.class);
         Archetype archetype = new Archetype(types);
 
         Entity entity = new Entity(1);
@@ -121,7 +121,7 @@ class ArchetypeTest {
 
     @Test
     void setComponentUpdatesValue() {
-        Set<Class<? extends Component>> types = Set.of(Position.class);
+        Set<Class<?>> types = Set.of(Position.class);
         Archetype archetype = new Archetype(types);
 
         Entity entity = new Entity(1);
@@ -135,7 +135,7 @@ class ArchetypeTest {
 
     @Test
     void getEntitiesReturnsAllEntities() {
-        Set<Class<? extends Component>> types = Set.of(Position.class);
+        Set<Class<?>> types = Set.of(Position.class);
         Archetype archetype = new Archetype(types);
 
         Entity e1 = new Entity(1);
@@ -152,7 +152,7 @@ class ArchetypeTest {
 
     @Test
     void getComponentColumnReturnsAllComponents() {
-        Set<Class<? extends Component>> types = Set.of(Position.class);
+        Set<Class<?>> types = Set.of(Position.class);
         Archetype archetype = new Archetype(types);
 
         Position p1 = new Position(1, 0, 0);
@@ -169,7 +169,7 @@ class ArchetypeTest {
 
     @Test
     void addDuplicateEntityThrowsException() {
-        Set<Class<? extends Component>> types = Set.of(Position.class);
+        Set<Class<?>> types = Set.of(Position.class);
         Archetype archetype = new Archetype(types);
 
         Entity entity = new Entity(1);
@@ -181,7 +181,7 @@ class ArchetypeTest {
 
     @Test
     void addEntityWithWrongComponentTypesThrowsException() {
-        Set<Class<? extends Component>> types = Set.of(Position.class, Velocity.class);
+        Set<Class<?>> types = Set.of(Position.class, Velocity.class);
         Archetype archetype = new Archetype(types);
 
         Entity entity = new Entity(1);
@@ -192,7 +192,7 @@ class ArchetypeTest {
 
     @Test
     void removeNonexistentEntityThrowsException() {
-        Set<Class<? extends Component>> types = Set.of(Position.class);
+        Set<Class<?>> types = Set.of(Position.class);
         Archetype archetype = new Archetype(types);
 
         assertThrows(IllegalArgumentException.class, () -> archetype.removeEntity(new Entity(999)));
@@ -200,7 +200,7 @@ class ArchetypeTest {
 
     @Test
     void archetypesWithSameTypesAreEqual() {
-        Set<Class<? extends Component>> types = Set.of(Position.class, Velocity.class);
+        Set<Class<?>> types = Set.of(Position.class, Velocity.class);
         Archetype a1 = new Archetype(types);
         Archetype a2 = new Archetype(types);
 
