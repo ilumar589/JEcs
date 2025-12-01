@@ -1,4 +1,4 @@
-package io.github.ilumar589.jecs.world.primitive;
+package io.github.ilumar589.jecs.world;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;

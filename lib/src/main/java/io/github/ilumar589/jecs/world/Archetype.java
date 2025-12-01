@@ -3,106 +3,262 @@ package io.github.ilumar589.jecs.world;
 import io.github.ilumar589.jecs.entity.Entity;
 import org.jspecify.annotations.Nullable;
 
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
+import java.lang.reflect.RecordComponent;
 import java.util.*;
 
 /**
- * Represents an archetype - a unique combination of component types.
- * Entities with the same component types are stored together in the same archetype
- * for cache-efficient iteration.
+ * An archetype implementation that decomposes record components into their primitive
+ * fields for improved cache locality, SIMD vectorization, and reduced memory overhead.
  * 
- * <h2>Storage Model: Struct-of-Arrays (SoA)</h2>
- * Uses columnar storage: each component type has its own {@link ComponentStore},
- * and all stores share the same index for a given entity. This Struct-of-Arrays
- * layout provides:
+ * <h2>Storage Model</h2>
+ * Each primitive field is stored in its own typed array:
+ * <pre>
+ * Archetype storage for Position(float x, float y, float z):
+ *   float[] x -> [1, 4, ...]  // Direct primitive storage
+ *   float[] y -> [2, 5, ...]
+ *   float[] z -> [3, 6, ...]
+ * </pre>
+ * 
+ * <h2>Performance Benefits</h2>
  * <ul>
- *   <li><b>Cache locality:</b> Components of the same type are stored contiguously,
- *       maximizing cache line utilization when iterating over a single component type</li>
- *   <li><b>Reduced pointer indirection:</b> Array-based storage minimizes reference chasing</li>
- *   <li><b>Efficient iteration:</b> Sequential memory access patterns leverage CPU prefetching</li>
+ *   <li><b>Cache locality:</b> Sequential access to same-typed fields</li>
+ *   <li><b>SIMD potential:</b> JIT can vectorize primitive array operations</li>
+ *   <li><b>Memory reduction:</b> No object headers for primitive fields</li>
+ *   <li><b>Zero GC:</b> Primitive arrays don't create garbage during iteration</li>
  * </ul>
  * 
- * <h2>Project Valhalla Readiness</h2>
- * This implementation is fully ready for Project Valhalla's value types:
+ * <h2>Requirements</h2>
+ * Components must be records with supported primitive field types:
  * <ul>
- *   <li>No marker interface required - components are just plain records/classes</li>
- *   <li>Value types can be stored flattened without interface overhead</li>
- *   <li>Entity is already a record and a candidate for {@code value class} conversion</li>
- *   <li>Component records can become value types with zero code changes</li>
+ *   <li>int, float, double, long, boolean, byte, short, char</li>
+ *   <li>String (treated as a reference type but still decomposed)</li>
  * </ul>
  * 
- * <h2>Cache-Friendly Iteration Pattern</h2>
- * For optimal performance when processing components:
- * <pre>{@code
- * // Get raw arrays for sequential access
- * List<Entity> entities = archetype.getEntities();
- * ComponentStore<Position> positions = archetype.getComponentStore(Position.class);
- * Object[] posData = positions.getRawData();
- * int size = positions.size();
+ * <h2>Thread Safety</h2>
+ * <ul>
+ *   <li>Readers use plain reads (no barriers) - maximum performance</li>
+ *   <li>Writers use release semantics - safe publication</li>
+ *   <li>External synchronization needed for concurrent structural modifications</li>
+ * </ul>
  * 
- * for (int i = 0; i < size; i++) {
- *     Position pos = (Position) posData[i];
- *     Entity entity = entities.get(i);
- *     // Process - sequential access maximizes cache hits
- * }
- * }</pre>
+ * @see ComponentReader
+ * @see ComponentWriter
  */
 public final class Archetype {
     /**
-     * Default initial capacity for component stores.
-     * Balances memory usage against reallocation overhead for typical use cases.
+     * Default initial capacity for entity storage.
      */
     private static final int DEFAULT_INITIAL_CAPACITY = 16;
     
+    /**
+     * Growth factor when resizing arrays.
+     */
+    private static final double GROWTH_FACTOR = 1.5;
+
+    // Global typed arrays - ONE per primitive type
+    private int[] globalInts;
+    private float[] globalFloats;
+    private double[] globalDoubles;
+    private long[] globalLongs;
+    private boolean[] globalBooleans;
+    private byte[] globalBytes;
+    private short[] globalShorts;
+    private char[] globalChars;
+    private String[] globalStrings;
+    
+    // Tracks allocation within each global array
+    private int intOffset = 0;
+    private int floatOffset = 0;
+    private int doubleOffset = 0;
+    private int longOffset = 0;
+    private int booleanOffset = 0;
+    private int byteOffset = 0;
+    private int shortOffset = 0;
+    private int charOffset = 0;
+    private int stringOffset = 0;
+
     private final Set<Class<?>> componentTypes;
+    private final Map<FieldKey, FieldColumn> fieldColumns;
+    private final Map<Class<?>, List<FieldColumn>> componentFieldColumns;
+    private final Map<Class<?>, MethodHandle> componentConstructors;
     
-    /**
-     * Stores entity references in insertion order.
-     * Entity IDs are stored near their component data indices for cache efficiency.
-     * 
-     * <h3>Valhalla Note</h3>
-     * When Entity becomes a value type, this could be stored as a primitive int[]
-     * for entity IDs, eliminating object headers and reference indirection.
-     */
     private final List<Entity> entities;
-    
-    /**
-     * Type-safe component storage using array-backed stores.
-     * Each store maintains contiguous memory for its component type.
-     */
-    private final Map<Class<?>, ComponentStore<?>> componentColumns;
-    
     private final Map<Entity, Integer> entityToIndex;
+    
+    private int capacity;
+    private int size;
 
     /**
-     * Creates a new archetype for the given set of component types.
+     * Creates a new Archetype for the given component types.
+     * All component types must be records with supported primitive fields.
      *
-     * @param componentTypes the set of component types that define this archetype
+     * @param componentTypes the set of component types
+     * @throws IllegalArgumentException if any type is not a record or has unsupported fields
      */
     public Archetype(Set<Class<?>> componentTypes) {
         this(componentTypes, DEFAULT_INITIAL_CAPACITY);
     }
-    
+
     /**
-     * Creates a new archetype with a capacity hint for better memory pre-allocation.
-     * Use this constructor when the expected number of entities is known.
+     * Creates a new Archetype with a specified initial capacity.
      *
-     * @param componentTypes the set of component types that define this archetype
-     * @param initialCapacity hint for initial storage capacity
+     * @param componentTypes the set of component types
+     * @param initialCapacity the initial storage capacity
+     * @throws IllegalArgumentException if any type is not a record or has unsupported fields
      */
-    @SuppressWarnings("unchecked")
     public Archetype(Set<Class<?>> componentTypes, int initialCapacity) {
         this.componentTypes = Set.copyOf(componentTypes);
+        this.capacity = Math.max(1, initialCapacity);
+        this.size = 0;
+        
+        this.fieldColumns = new HashMap<>();
+        this.componentFieldColumns = new HashMap<>();
+        this.componentConstructors = new HashMap<>();
         this.entities = new ArrayList<>(initialCapacity);
-        this.componentColumns = new HashMap<>();
         this.entityToIndex = new HashMap<>();
-
+        
+        // Count fields per type to allocate arrays
+        int totalInts = 0, totalFloats = 0, totalDoubles = 0, totalLongs = 0;
+        int totalBooleans = 0, totalBytes = 0, totalShorts = 0, totalChars = 0;
+        int totalStrings = 0;
+        
         for (Class<?> type : componentTypes) {
-            componentColumns.put(type, new ComponentStore<>((Class<Object>) type, initialCapacity));
+            if (!type.isRecord()) {
+                throw new IllegalArgumentException("Component type must be a record: " + type.getName());
+            }
+            
+            RecordComponent[] components = type.getRecordComponents();
+            for (RecordComponent rc : components) {
+                PrimitiveType pt = PrimitiveType.fromClass(rc.getType());
+                if (pt == null) {
+                    throw new IllegalArgumentException(
+                        "Unsupported field type: " + rc.getType().getName() + 
+                        " for field " + rc.getName() + " in " + type.getName());
+                }
+                
+                switch (pt) {
+                    case INT -> totalInts++;
+                    case FLOAT -> totalFloats++;
+                    case DOUBLE -> totalDoubles++;
+                    case LONG -> totalLongs++;
+                    case BOOLEAN -> totalBooleans++;
+                    case BYTE -> totalBytes++;
+                    case SHORT -> totalShorts++;
+                    case CHAR -> totalChars++;
+                    case STRING -> totalStrings++;
+                }
+            }
+        }
+        
+        // Allocate global arrays
+        globalInts = totalInts > 0 ? new int[totalInts * capacity] : new int[0];
+        globalFloats = totalFloats > 0 ? new float[totalFloats * capacity] : new float[0];
+        globalDoubles = totalDoubles > 0 ? new double[totalDoubles * capacity] : new double[0];
+        globalLongs = totalLongs > 0 ? new long[totalLongs * capacity] : new long[0];
+        globalBooleans = totalBooleans > 0 ? new boolean[totalBooleans * capacity] : new boolean[0];
+        globalBytes = totalBytes > 0 ? new byte[totalBytes * capacity] : new byte[0];
+        globalShorts = totalShorts > 0 ? new short[totalShorts * capacity] : new short[0];
+        globalChars = totalChars > 0 ? new char[totalChars * capacity] : new char[0];
+        globalStrings = totalStrings > 0 ? new String[totalStrings * capacity] : new String[0];
+        
+        // Create field columns for each component type
+        for (Class<?> type : componentTypes) {
+            List<FieldColumn> columns = new ArrayList<>();
+            RecordComponent[] components = type.getRecordComponents();
+            
+            for (int i = 0; i < components.length; i++) {
+                RecordComponent rc = components[i];
+                PrimitiveType pt = PrimitiveType.fromClass(rc.getType());
+                
+                int offset = allocateFieldOffset(pt);
+                FieldColumn column = new FieldColumn(type, rc, i, offset);
+                
+                fieldColumns.put(column.getFieldKey(), column);
+                columns.add(column);
+            }
+            
+            componentFieldColumns.put(type, columns);
+            componentConstructors.put(type, createConstructorHandle(type, components));
         }
     }
 
     /**
-     * Returns the set of component types that define this archetype.
+     * Allocates space in the appropriate global array for a field.
+     *
+     * @param type the primitive type
+     * @return the starting offset for this field's data
+     */
+    private int allocateFieldOffset(PrimitiveType type) {
+        return switch (type) {
+            case INT -> {
+                int offset = intOffset;
+                intOffset += capacity;
+                yield offset;
+            }
+            case FLOAT -> {
+                int offset = floatOffset;
+                floatOffset += capacity;
+                yield offset;
+            }
+            case DOUBLE -> {
+                int offset = doubleOffset;
+                doubleOffset += capacity;
+                yield offset;
+            }
+            case LONG -> {
+                int offset = longOffset;
+                longOffset += capacity;
+                yield offset;
+            }
+            case BOOLEAN -> {
+                int offset = booleanOffset;
+                booleanOffset += capacity;
+                yield offset;
+            }
+            case BYTE -> {
+                int offset = byteOffset;
+                byteOffset += capacity;
+                yield offset;
+            }
+            case SHORT -> {
+                int offset = shortOffset;
+                shortOffset += capacity;
+                yield offset;
+            }
+            case CHAR -> {
+                int offset = charOffset;
+                charOffset += capacity;
+                yield offset;
+            }
+            case STRING -> {
+                int offset = stringOffset;
+                stringOffset += capacity;
+                yield offset;
+            }
+        };
+    }
+
+    /**
+     * Creates a method handle for the canonical constructor of a record type.
+     */
+    private MethodHandle createConstructorHandle(Class<?> recordType, RecordComponent[] components) {
+        try {
+            Class<?>[] paramTypes = new Class<?>[components.length];
+            for (int i = 0; i < components.length; i++) {
+                paramTypes[i] = components[i].getType();
+            }
+            return MethodHandles.lookup()
+                    .findConstructor(recordType, MethodType.methodType(void.class, paramTypes));
+        } catch (NoSuchMethodException | IllegalAccessException e) {
+            throw new RuntimeException("Cannot access constructor for " + recordType.getName(), e);
+        }
+    }
+
+    /**
+     * Returns the set of component types in this archetype.
      *
      * @return an unmodifiable set of component types
      */
@@ -125,7 +281,16 @@ public final class Archetype {
      * @return the entity count
      */
     public int size() {
-        return entities.size();
+        return size;
+    }
+
+    /**
+     * Returns the current capacity of the archetype.
+     *
+     * @return the capacity
+     */
+    public int capacity() {
+        return capacity;
     }
 
     /**
@@ -142,60 +307,73 @@ public final class Archetype {
      * Adds an entity with its components to this archetype.
      *
      * @param entity the entity to add
-     * @param components the components for the entity (must match archetype's component types)
-     * @throws IllegalArgumentException if components don't match archetype's types
+     * @param components the components (must match archetype's component types)
+     * @throws IllegalArgumentException if entity exists or components don't match
      */
-    @SuppressWarnings("unchecked")
     public void addEntity(Entity entity, Map<Class<?>, Object> components) {
         if (entityToIndex.containsKey(entity)) {
             throw new IllegalArgumentException("Entity already exists in archetype: " + entity);
         }
-
+        
         if (!components.keySet().equals(componentTypes)) {
             throw new IllegalArgumentException("Component types don't match archetype. Expected: " 
                     + componentTypes + ", got: " + components.keySet());
         }
-
-        int index = entities.size();
+        
+        ensureCapacity(size + 1);
+        
+        int index = size;
         entities.add(entity);
         entityToIndex.put(entity, index);
-
+        
+        // Write all component fields to global arrays
         for (var entry : components.entrySet()) {
-            ComponentStore<Object> store = (ComponentStore<Object>) componentColumns.get(entry.getKey());
-            store.add(entry.getValue());
+            Class<?> type = entry.getKey();
+            Object component = entry.getValue();
+            List<FieldColumn> columns = componentFieldColumns.get(type);
+            
+            for (FieldColumn column : columns) {
+                Object array = getGlobalArray(column.getType());
+                column.writeFromComponent(array, index, component);
+            }
         }
+        
+        size++;
     }
 
     /**
-     * Removes an entity from this archetype.
-     * Uses swap-and-pop to maintain contiguous storage.
+     * Removes an entity from this archetype using swap-and-pop.
      *
      * @param entity the entity to remove
      * @return the components that were associated with the entity
-     * @throws IllegalArgumentException if entity doesn't exist in this archetype
+     * @throws IllegalArgumentException if entity doesn't exist
      */
-    @SuppressWarnings("unchecked")
     public Map<Class<?>, Object> removeEntity(Entity entity) {
         Integer index = entityToIndex.get(entity);
         if (index == null) {
             throw new IllegalArgumentException("Entity doesn't exist in archetype: " + entity);
         }
-
+        
         Map<Class<?>, Object> removedComponents = new HashMap<>();
-        int lastIndex = entities.size() - 1;
-
-        for (var entry : componentColumns.entrySet()) {
-            ComponentStore<Object> store = (ComponentStore<Object>) entry.getValue();
-            Object removedComponent = store.get(index);
-            removedComponents.put(entry.getKey(), removedComponent);
-
-            // Use swap-and-pop for efficient removal
+        int lastIndex = size - 1;
+        
+        // Read removed components and swap with last if needed
+        for (Class<?> type : componentTypes) {
+            Object component = readComponent(type, index);
+            removedComponents.put(type, component);
+            
             if (index != lastIndex) {
-                store.set(index, store.get(lastIndex));
+                // Swap with last element
+                List<FieldColumn> columns = componentFieldColumns.get(type);
+                for (FieldColumn column : columns) {
+                    Object array = getGlobalArray(column.getType());
+                    Object lastValue = column.readPlain(array, lastIndex);
+                    column.writeRelease(array, index, lastValue);
+                }
             }
-            store.removeSwapPop(lastIndex);
         }
-
+        
+        // Update entity tracking
         if (index != lastIndex) {
             Entity lastEntity = entities.get(lastIndex);
             entities.set(index, lastEntity);
@@ -203,7 +381,8 @@ public final class Archetype {
         }
         entities.removeLast();
         entityToIndex.remove(entity);
-
+        size--;
+        
         return removedComponents;
     }
 
@@ -221,13 +400,12 @@ public final class Archetype {
         if (index == null) {
             return null;
         }
-
-        ComponentStore<?> store = componentColumns.get(type);
-        if (store == null) {
+        
+        if (!componentTypes.contains(type)) {
             return null;
         }
-
-        return (T) store.get(index);
+        
+        return (T) readComponent(type, index);
     }
 
     /**
@@ -235,59 +413,250 @@ public final class Archetype {
      *
      * @param entity the entity
      * @param component the component to set
-     * @throws IllegalArgumentException if entity doesn't exist or component type not in archetype
+     * @throws IllegalArgumentException if entity doesn't exist or type not in archetype
      */
-    @SuppressWarnings("unchecked")
     public void setComponent(Entity entity, Object component) {
         Integer index = entityToIndex.get(entity);
         if (index == null) {
             throw new IllegalArgumentException("Entity doesn't exist in archetype: " + entity);
         }
-
+        
         Class<?> type = component.getClass();
-        ComponentStore<Object> store = (ComponentStore<Object>) componentColumns.get(type);
-        if (store == null) {
+        List<FieldColumn> columns = componentFieldColumns.get(type);
+        if (columns == null) {
             throw new IllegalArgumentException("Component type not in archetype: " + type);
         }
-
-        store.set(index, component);
-    }
-
-    /**
-     * Gets the component column for a specific type.
-     *
-     * @param type the component type
-     * @param <T> the component type
-     * @return an unmodifiable list of components of the specified type
-     */
-    @SuppressWarnings("unchecked")
-    public <T> List<T> getComponentColumn(Class<T> type) {
-        ComponentStore<?> store = componentColumns.get(type);
-        if (store == null) {
-            return Collections.emptyList();
+        
+        for (FieldColumn column : columns) {
+            Object array = getGlobalArray(column.getType());
+            column.writeFromComponent(array, index, component);
         }
-        return (List<T>) store.asList();
     }
-    
+
     /**
-     * Gets the raw component store for a specific type.
-     * For performance-critical iteration, use this to access the underlying array.
+     * Gets a read-only accessor for a component type.
      *
-     * @param type the component type
+     * @param componentType the component type
      * @param <T> the component type
-     * @return the component store, or null if the type is not in this archetype
+     * @return a ComponentReader for the specified type
+     * @throws IllegalArgumentException if the type is not in this archetype
      */
     @SuppressWarnings("unchecked")
-    public <T> @Nullable ComponentStore<T> getComponentStore(Class<T> type) {
-        return (ComponentStore<T>) componentColumns.get(type);
+    public <T> ComponentReader<T> getReader(Class<T> componentType) {
+        if (!componentTypes.contains(componentType)) {
+            throw new IllegalArgumentException("Component type not in archetype: " + componentType);
+        }
+        
+        return new ComponentReader<>() {
+            @Override
+            public T read(int entityIndex) {
+                if (entityIndex < 0 || entityIndex >= size) {
+                    throw new IndexOutOfBoundsException("Index: " + entityIndex + ", Size: " + size);
+                }
+                return (T) readComponent(componentType, entityIndex);
+            }
+            
+            @Override
+            public int size() {
+                return size;
+            }
+        };
+    }
+
+    /**
+     * Gets a mutable accessor for a component type.
+     *
+     * @param componentType the component type
+     * @param <T> the component type
+     * @return a ComponentWriter for the specified type
+     * @throws IllegalArgumentException if the type is not in this archetype
+     */
+    public <T> ComponentWriter<T> getWriter(Class<T> componentType) {
+        if (!componentTypes.contains(componentType)) {
+            throw new IllegalArgumentException("Component type not in archetype: " + componentType);
+        }
+        
+        List<FieldColumn> columns = componentFieldColumns.get(componentType);
+        
+        return new ComponentWriter<>() {
+            @Override
+            public void write(int entityIndex, T component) {
+                if (entityIndex < 0 || entityIndex >= size) {
+                    throw new IndexOutOfBoundsException("Index: " + entityIndex + ", Size: " + size);
+                }
+                
+                for (FieldColumn column : columns) {
+                    Object array = getGlobalArray(column.getType());
+                    column.writeFromComponent(array, entityIndex, component);
+                }
+            }
+            
+            @Override
+            public int size() {
+                return size;
+            }
+        };
+    }
+
+    /**
+     * Reads a component from the primitive arrays and reconstructs it.
+     */
+    private Object readComponent(Class<?> componentType, int entityIndex) {
+        List<FieldColumn> columns = componentFieldColumns.get(componentType);
+        MethodHandle constructor = componentConstructors.get(componentType);
+        
+        Object[] args = new Object[columns.size()];
+        for (int i = 0; i < columns.size(); i++) {
+            FieldColumn column = columns.get(i);
+            Object array = getGlobalArray(column.getType());
+            args[column.getFieldIndex()] = column.readPlain(array, entityIndex);
+        }
+        
+        try {
+            return constructor.invokeWithArguments(args);
+        } catch (Throwable e) {
+            throw new RuntimeException("Failed to reconstruct component " + 
+                    componentType.getName(), e);
+        }
+    }
+
+    /**
+     * Returns the global array for a primitive type.
+     */
+    private Object getGlobalArray(PrimitiveType type) {
+        return switch (type) {
+            case INT -> globalInts;
+            case FLOAT -> globalFloats;
+            case DOUBLE -> globalDoubles;
+            case LONG -> globalLongs;
+            case BOOLEAN -> globalBooleans;
+            case BYTE -> globalBytes;
+            case SHORT -> globalShorts;
+            case CHAR -> globalChars;
+            case STRING -> globalStrings;
+        };
+    }
+
+    /**
+     * Ensures the archetype has capacity for at least the specified number of entities.
+     */
+    private void ensureCapacity(int minCapacity) {
+        if (minCapacity <= capacity) {
+            return;
+        }
+        
+        int newCapacity = (int) Math.max(minCapacity, capacity * GROWTH_FACTOR);
+        resizeArrays(newCapacity);
+    }
+
+    /**
+     * Resizes all global arrays to accommodate more entities.
+     */
+    private void resizeArrays(int newCapacity) {
+        int oldCapacity = capacity;
+        
+        // Create new arrays
+        int[] newInts = new int[intOffset > 0 ? (intOffset / oldCapacity) * newCapacity : 0];
+        float[] newFloats = new float[floatOffset > 0 ? (floatOffset / oldCapacity) * newCapacity : 0];
+        double[] newDoubles = new double[doubleOffset > 0 ? (doubleOffset / oldCapacity) * newCapacity : 0];
+        long[] newLongs = new long[longOffset > 0 ? (longOffset / oldCapacity) * newCapacity : 0];
+        boolean[] newBooleans = new boolean[booleanOffset > 0 ? (booleanOffset / oldCapacity) * newCapacity : 0];
+        byte[] newBytes = new byte[byteOffset > 0 ? (byteOffset / oldCapacity) * newCapacity : 0];
+        short[] newShorts = new short[shortOffset > 0 ? (shortOffset / oldCapacity) * newCapacity : 0];
+        char[] newChars = new char[charOffset > 0 ? (charOffset / oldCapacity) * newCapacity : 0];
+        String[] newStrings = new String[stringOffset > 0 ? (stringOffset / oldCapacity) * newCapacity : 0];
+        
+        // Reset offsets and copy data
+        intOffset = 0;
+        floatOffset = 0;
+        doubleOffset = 0;
+        longOffset = 0;
+        booleanOffset = 0;
+        byteOffset = 0;
+        shortOffset = 0;
+        charOffset = 0;
+        stringOffset = 0;
+        
+        // Update each field column with new offset and copy data
+        for (Class<?> type : componentTypes) {
+            List<FieldColumn> columns = componentFieldColumns.get(type);
+            for (FieldColumn column : columns) {
+                int oldOffset = column.getGlobalOffset();
+                int newOffset;
+                
+                switch (column.getType()) {
+                    case INT -> {
+                        newOffset = intOffset;
+                        System.arraycopy(globalInts, oldOffset, newInts, newOffset, size);
+                        intOffset += newCapacity;
+                    }
+                    case FLOAT -> {
+                        newOffset = floatOffset;
+                        System.arraycopy(globalFloats, oldOffset, newFloats, newOffset, size);
+                        floatOffset += newCapacity;
+                    }
+                    case DOUBLE -> {
+                        newOffset = doubleOffset;
+                        System.arraycopy(globalDoubles, oldOffset, newDoubles, newOffset, size);
+                        doubleOffset += newCapacity;
+                    }
+                    case LONG -> {
+                        newOffset = longOffset;
+                        System.arraycopy(globalLongs, oldOffset, newLongs, newOffset, size);
+                        longOffset += newCapacity;
+                    }
+                    case BOOLEAN -> {
+                        newOffset = booleanOffset;
+                        System.arraycopy(globalBooleans, oldOffset, newBooleans, newOffset, size);
+                        booleanOffset += newCapacity;
+                    }
+                    case BYTE -> {
+                        newOffset = byteOffset;
+                        System.arraycopy(globalBytes, oldOffset, newBytes, newOffset, size);
+                        byteOffset += newCapacity;
+                    }
+                    case SHORT -> {
+                        newOffset = shortOffset;
+                        System.arraycopy(globalShorts, oldOffset, newShorts, newOffset, size);
+                        shortOffset += newCapacity;
+                    }
+                    case CHAR -> {
+                        newOffset = charOffset;
+                        System.arraycopy(globalChars, oldOffset, newChars, newOffset, size);
+                        charOffset += newCapacity;
+                    }
+                    case STRING -> {
+                        newOffset = stringOffset;
+                        System.arraycopy(globalStrings, oldOffset, newStrings, newOffset, size);
+                        stringOffset += newCapacity;
+                    }
+                    default -> throw new IllegalStateException("Unknown primitive type: " + column.getType());
+                }
+                
+                column.setGlobalOffset(newOffset);
+            }
+        }
+        
+        // Replace arrays
+        globalInts = newInts;
+        globalFloats = newFloats;
+        globalDoubles = newDoubles;
+        globalLongs = newLongs;
+        globalBooleans = newBooleans;
+        globalBytes = newBytes;
+        globalShorts = newShorts;
+        globalChars = newChars;
+        globalStrings = newStrings;
+        
+        capacity = newCapacity;
     }
 
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        Archetype archetype = (Archetype) o;
-        return Objects.equals(componentTypes, archetype.componentTypes);
+        Archetype that = (Archetype) o;
+        return Objects.equals(componentTypes, that.componentTypes);
     }
 
     @Override
@@ -299,7 +668,8 @@ public final class Archetype {
     public String toString() {
         return "Archetype{" +
                 "componentTypes=" + componentTypes +
-                ", entityCount=" + entities.size() +
+                ", entityCount=" + size +
+                ", capacity=" + capacity +
                 '}';
     }
 }

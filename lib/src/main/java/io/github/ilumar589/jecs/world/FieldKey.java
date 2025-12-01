@@ -1,4 +1,4 @@
-package io.github.ilumar589.jecs.world.primitive;
+package io.github.ilumar589.jecs.world;
 
 /**
  * A unique key identifying a field within a component type.

@@ -1,4 +1,4 @@
-package io.github.ilumar589.jecs.world.primitive;
+package io.github.ilumar589.jecs.world;
 
 /**
  * Provides mutable access to components stored in a PrimitiveArchetype.
