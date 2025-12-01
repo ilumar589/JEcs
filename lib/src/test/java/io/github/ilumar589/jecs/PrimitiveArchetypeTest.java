@@ -14,6 +14,11 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class PrimitiveArchetypeTest {
 
+    // Static inner class for non-record test
+    static class NonRecordComponent {
+        int value;
+    }
+
     @Test
     void createArchetypeWithComponentTypes() {
         Set<Class<?>> types = Set.of(Position.class, Velocity.class);
@@ -431,10 +436,6 @@ class PrimitiveArchetypeTest {
 
     @Test
     void nonRecordTypeThrowsException() {
-        class NonRecordComponent {
-            int value;
-        }
-
         assertThrows(IllegalArgumentException.class, () -> 
                 new PrimitiveArchetype(Set.of(NonRecordComponent.class)));
     }
