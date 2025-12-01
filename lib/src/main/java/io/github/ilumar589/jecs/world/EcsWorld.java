@@ -1,10 +1,12 @@
 package io.github.ilumar589.jecs.world;
 
 import io.github.ilumar589.jecs.entity.Entity;
+import io.github.ilumar589.jecs.query.ComponentQuery;
 import org.jspecify.annotations.Nullable;
 
 import java.util.*;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * The main entry point for the ECS framework.
@@ -259,6 +261,86 @@ public final class EcsWorld {
                 }
             }
         }
+    }
+
+    // ==================== New Component-Focused API ====================
+
+    /**
+     * Spawns a new entity with the specified components.
+     * This is the preferred method for creating entities in the new component-focused API.
+     *
+     * <h2>Usage Example</h2>
+     * <pre>{@code
+     * world.spawn(new Position(0, 0, 0), new Velocity(1, 1, 1));
+     * }</pre>
+     *
+     * @param components the components for the new entity
+     * @throws IllegalArgumentException if duplicate component types are provided
+     */
+    public void spawn(Object... components) {
+        createEntity(components);
+    }
+
+    /**
+     * Spawns multiple entities with components created by the provided suppliers.
+     * Each entity receives one component from each supplier.
+     *
+     * <h2>Usage Example</h2>
+     * <pre>{@code
+     * Random random = new Random();
+     * world.spawnBatch(100,
+     *     () -> new Position(random.nextFloat(), random.nextFloat(), random.nextFloat()),
+     *     () -> new Velocity(1, 0, 0)
+     * );
+     * }</pre>
+     *
+     * @param count the number of entities to spawn
+     * @param suppliers the component suppliers
+     * @throws IllegalArgumentException if duplicate component types are provided
+     */
+    @SafeVarargs
+    public final void spawnBatch(int count, Supplier<Object>... suppliers) {
+        for (int i = 0; i < count; i++) {
+            Object[] components = new Object[suppliers.length];
+            for (int j = 0; j < suppliers.length; j++) {
+                components[j] = suppliers[j].get();
+            }
+            createEntity(components);
+        }
+    }
+
+    /**
+     * Creates a new fluent query builder for component-focused queries.
+     * Use this to query entities without directly working with Entity objects.
+     *
+     * <h2>Usage Examples</h2>
+     * <pre>{@code
+     * // Simple query with inclusion
+     * world.componentQuery()
+     *     .with(Position.class, Velocity.class)
+     *     .forEach((pos, vel) -> {
+     *         System.out.println("Pos: " + pos + ", Vel: " + vel);
+     *     });
+     *
+     * // Query with exclusion
+     * world.componentQuery()
+     *     .with(Position.class, Health.class)
+     *     .without(Dead.class)
+     *     .forEach((pos, health) -> {
+     *         // Process only living entities
+     *     });
+     *
+     * // Count matching entities
+     * int count = world.componentQuery()
+     *     .with(Position.class)
+     *     .without(Velocity.class)
+     *     .count();
+     * }</pre>
+     *
+     * @return a new ComponentQuery builder
+     */
+    public ComponentQuery componentQuery() {
+        return new ComponentQuery(archetypes.values(), this::setComponent);
     }
 
     /**
