@@ -16,6 +16,21 @@ repositories {
     mavenCentral()
 }
 
+// Create JMH source set for benchmarks
+sourceSets {
+    create("jmh") {
+        java.srcDir("src/jmh/java")
+        compileClasspath += sourceSets.main.get().output
+        runtimeClasspath += sourceSets.main.get().output
+    }
+}
+
+val jmhImplementation: Configuration by configurations.getting {
+    extendsFrom(configurations.implementation.get())
+}
+
+val jmhAnnotationProcessor: Configuration by configurations.getting
+
 dependencies {
     // This dependency is exported to consumers, that is to say found on their compile classpath.
     api(libs.commons.math3)
@@ -25,6 +40,10 @@ dependencies {
     
     // JSpecify nullness annotations for better null safety
     api(libs.jspecify)
+    
+    // JMH for benchmarking
+    jmhImplementation(libs.jmh.core)
+    jmhAnnotationProcessor(libs.jmh.generator.annprocess)
 }
 
 testing {
@@ -42,4 +61,46 @@ java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(25)
     }
+}
+
+// Task to run JMH benchmarks
+tasks.register<JavaExec>("jmh") {
+    group = "benchmark"
+    description = "Runs JMH benchmarks"
+    mainClass.set("org.openjdk.jmh.Main")
+    classpath = sourceSets["jmh"].runtimeClasspath
+    
+    val outputDir = layout.buildDirectory.dir("reports/jmh")
+    
+    // Create output directory
+    doFirst {
+        outputDir.get().asFile.mkdirs()
+    }
+    
+    // Default JMH arguments - can be overridden via command line
+    args = listOf(
+        "-rf", "json",
+        "-rff", outputDir.get().file("results.json").asFile.absolutePath,
+        "-wi", "2",  // warmup iterations
+        "-i", "3",   // measurement iterations
+        "-f", "1",   // forks
+        "-tu", "us"  // time unit: microseconds
+    )
+}
+
+// Task to generate HTML report from JMH results
+tasks.register<JavaExec>("jmhReport") {
+    group = "benchmark"
+    description = "Generates HTML report from JMH results"
+    dependsOn("jmh")
+    
+    mainClass.set("io.github.ilumar589.jecs.benchmark.JmhHtmlReportGenerator")
+    classpath = sourceSets["jmh"].runtimeClasspath
+    
+    val reportsDir = layout.buildDirectory.dir("reports/jmh")
+    
+    args = listOf(
+        reportsDir.get().file("results.json").asFile.absolutePath,
+        reportsDir.get().file("report.html").asFile.absolutePath
+    )
 }

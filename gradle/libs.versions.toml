@@ -5,8 +5,11 @@
 commons-math3 = "3.6.1"
 guava = "33.4.6-jre"
 jspecify = "1.0.0"
+jmh = "1.37"
 
 [libraries]
 commons-math3 = { module = "org.apache.commons:commons-math3", version.ref = "commons-math3" }
 guava = { module = "com.google.guava:guava", version.ref = "guava" }
 jspecify = { module = "org.jspecify:jspecify", version.ref = "jspecify" }
+jmh-core = { module = "org.openjdk.jmh:jmh-core", version.ref = "jmh" }
+jmh-generator-annprocess = { module = "org.openjdk.jmh:jmh-generator-annprocess", version.ref = "jmh" }
