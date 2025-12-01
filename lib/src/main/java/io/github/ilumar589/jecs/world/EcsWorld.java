@@ -340,15 +340,7 @@ public final class EcsWorld {
      * @return a new ComponentQuery builder
      */
     public ComponentQuery componentQuery() {
-        // Convert internal ArchetypeKey map to ComponentQuery.ArchetypeKey map
-        Map<ComponentQuery.ArchetypeKey, Archetype> queryArchetypes = new HashMap<>();
-        for (var entry : archetypes.entrySet()) {
-            Archetype archetype = entry.getValue();
-            ComponentQuery.ArchetypeKey queryKey = new ComponentQuery.ArchetypeKey(archetype.getComponentTypes());
-            queryArchetypes.put(queryKey, archetype);
-        }
-
-        return new ComponentQuery(queryArchetypes, entityToArchetype, this::setComponent);
+        return new ComponentQuery(archetypes.values(), this::setComponent);
     }
 
     /**

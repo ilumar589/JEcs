@@ -16,10 +16,10 @@
  * <h2>Usage Example</h2>
  * <pre>{@code
  * // Query with inclusion and exclusion
- * world.query()
+ * world.componentQuery()
  *     .with(Position.class, Velocity.class)
  *     .without(Dead.class)
- *     .forEach((pos, vel) -> {
+ *     .forEach(Position.class, Velocity.class, (pos, vel) -> {
  *         // Process components directly
  *     });
  * }</pre>

@@ -1,9 +1,7 @@
 package io.github.ilumar589.jecs;
 
 import io.github.ilumar589.jecs.component.*;
-import io.github.ilumar589.jecs.query.ComponentTuple2;
-import io.github.ilumar589.jecs.query.ComponentTuple3;
-import io.github.ilumar589.jecs.query.ComponentTuple4;
+import io.github.ilumar589.jecs.query.*;
 import io.github.ilumar589.jecs.world.EcsWorld;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -640,5 +638,161 @@ class ComponentQueryApiTest {
         assertEquals(10000, world.getEntityCount());
         assertTrue((endTime - startTime) / 1_000_000.0 < 500,
             "Batch spawn of 10000 entities should complete in under 500ms");
+    }
+
+    // ==================== Access Control Tests ====================
+
+    @Test
+    void forEachMutableUpdatesComponent() {
+        world.spawn(new Position(1, 0, 0));
+        world.spawn(new Position(2, 0, 0));
+
+        // Use mutable access to update positions
+        world.componentQuery()
+            .withMutable(Position.class)
+            .forEachMutable(Position.class, pos -> {
+                pos.update(p -> new Position(p.x() + 10, p.y(), p.z()));
+            });
+
+        // Verify positions were updated
+        List<Float> xValues = new ArrayList<>();
+        world.componentQuery()
+            .forEach(Position.class, pos -> xValues.add(pos.x()));
+
+        assertTrue(xValues.contains(11.0f));
+        assertTrue(xValues.contains(12.0f));
+    }
+
+    @Test
+    void forEachWithAccessReadOnlyAndMutable() {
+        world.spawn(new Position(0, 0, 0), new Velocity(1, 2, 3));
+        world.spawn(new Position(10, 0, 0), new Velocity(5, 0, 0));
+
+        // Update position based on velocity (position is mutable, velocity is read-only)
+        world.componentQuery()
+            .withMutable(Position.class)
+            .withReadOnly(Velocity.class)
+            .forEachWithAccess(Position.class, Velocity.class, (pos, vel) -> {
+                pos.update(p -> new Position(
+                    p.x() + vel.get().dx(),
+                    p.y() + vel.get().dy(),
+                    p.z() + vel.get().dz()
+                ));
+            });
+
+        // Verify positions were updated based on velocities
+        List<Float> xValues = new ArrayList<>();
+        world.componentQuery()
+            .forEach(Position.class, pos -> xValues.add(pos.x()));
+
+        assertTrue(xValues.contains(1.0f));  // 0 + 1
+        assertTrue(xValues.contains(15.0f)); // 10 + 5
+    }
+
+    @Test
+    void readOnlyAndMutableMarking() {
+        var query = world.componentQuery()
+            .withReadOnly(Position.class)
+            .withMutable(Velocity.class);
+
+        assertTrue(query.isReadOnly(Position.class));
+        assertFalse(query.isMutable(Position.class));
+        assertTrue(query.isMutable(Velocity.class));
+        assertFalse(query.isReadOnly(Velocity.class));
+    }
+
+    @Test
+    void mutableWrapperTracksModifications() {
+        world.spawn(new Position(1, 0, 0));
+        world.spawn(new Position(2, 0, 0));
+
+        // Only modify positions with x > 1
+        world.componentQuery()
+            .forEachMutable(Position.class, pos -> {
+                if (pos.get().x() > 1.5f) {
+                    pos.set(new Position(100, 0, 0));
+                }
+                // Don't modify positions with x <= 1.5
+            });
+
+        List<Float> xValues = new ArrayList<>();
+        world.componentQuery()
+            .forEach(Position.class, pos -> xValues.add(pos.x()));
+
+        assertTrue(xValues.contains(1.0f));   // Unchanged
+        assertTrue(xValues.contains(100.0f)); // Changed
+    }
+
+    @Test
+    void physicsSystemWithAccessControl() {
+        // Setup: Create moving entities
+        for (int i = 0; i < 50; i++) {
+            world.spawn(
+                new Position(i, 0, 0),
+                new Velocity(1, 0, 0)
+            );
+        }
+
+        // Physics system: Update positions based on velocity
+        // Position is mutable, Velocity is read-only
+        world.componentQuery()
+            .withMutable(Position.class)
+            .withReadOnly(Velocity.class)
+            .forEachWithAccess(Position.class, Velocity.class, (pos, vel) -> {
+                Position current = pos.get();
+                Velocity velocity = vel.get();
+                pos.set(new Position(
+                    current.x() + velocity.dx(),
+                    current.y() + velocity.dy(),
+                    current.z() + velocity.dz()
+                ));
+            });
+
+        // Verify all positions were updated
+        AtomicInteger updated = new AtomicInteger(0);
+        world.componentQuery()
+            .forEach(Position.class, pos -> {
+                if (pos.x() >= 1.0f) {
+                    updated.incrementAndGet();
+                }
+            });
+
+        assertEquals(50, updated.get());
+    }
+
+    @Test
+    void healthSystemWithAccessControlAndExclusion() {
+        // Create living and dead entities
+        world.spawn(new Health(100, 100));
+        world.spawn(new Health(50, 100));
+        world.spawn(new Health(0, 100), new Dead());
+
+        // Damage only living entities
+        world.componentQuery()
+            .withMutable(Health.class)
+            .without(Dead.class)
+            .forEachMutable(Health.class, health -> {
+                health.update(h -> new Health(
+                    Math.max(0, h.current() - 10),
+                    h.max()
+                ));
+            });
+
+        // Verify only living entities were damaged
+        List<Integer> healthValues = new ArrayList<>();
+        world.componentQuery()
+            .without(Dead.class)
+            .forEach(Health.class, h -> healthValues.add(h.current()));
+
+        assertTrue(healthValues.contains(90));  // 100 - 10
+        assertTrue(healthValues.contains(40));  // 50 - 10
+        assertEquals(2, healthValues.size());
+
+        // Verify dead entity unchanged
+        AtomicInteger deadHealth = new AtomicInteger(-1);
+        world.componentQuery()
+            .with(Dead.class)
+            .forEach(Health.class, h -> deadHealth.set(h.current()));
+        assertEquals(0, deadHealth.get());
     }
 }
