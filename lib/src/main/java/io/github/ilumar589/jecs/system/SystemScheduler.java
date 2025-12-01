@@ -328,7 +328,6 @@ public final class SystemScheduler {
 
                 // Group non-conflicting ready systems into the same stage
                 List<System> stageSystem = new ArrayList<>();
-                List<System> deferred = new ArrayList<>();
 
                 for (System system : ready) {
                     boolean canAdd = true;
@@ -340,9 +339,8 @@ public final class SystemScheduler {
                     }
                     if (canAdd) {
                         stageSystem.add(system);
-                    } else {
-                        deferred.add(system);
                     }
+                    // Systems that can't be added stay in 'remaining' for the next iteration
                 }
 
                 stages.add(new SystemStage(stageSystem));
