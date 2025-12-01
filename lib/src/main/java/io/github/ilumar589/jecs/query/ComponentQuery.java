@@ -76,7 +76,7 @@ public final class ComponentQuery {
 
     /**
      * Specifies the component types that entities must have.
-     * This is a shorthand that defaults to read-only access.
+     * Access control is unspecified - components can be read or modified.
      * For explicit access control, use {@link #withReadOnly} or {@link #withMutable}.
      *
      * @param types the required component types
