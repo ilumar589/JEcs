@@ -3,8 +3,8 @@
  * 
  * <p>This package serves as the root for the JEcs framework, which provides:
  * <ul>
- *   <li>Archetype-based entity storage for cache efficiency</li>
- *   <li>Array-backed component storage (Struct-of-Arrays layout)</li>
+ *   <li>Primitive decomposition for cache-efficient component storage</li>
+ *   <li>VarHandle-based access for high-performance reads and writes</li>
  *   <li>Full Project Valhalla value type readiness</li>
  * </ul>
  * 
