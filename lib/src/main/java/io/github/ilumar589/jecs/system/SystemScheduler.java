@@ -6,35 +6,56 @@ import java.util.*;
 import java.util.concurrent.*;
 
 /**
- * Schedules and executes systems according to their dependencies and access patterns.
- * Automatically computes execution stages for parallelization.
+ * Schedules and executes systems according to their component access patterns.
+ * Automatically determines which systems can run in parallel.
  *
  * <h2>Automatic Parallelization</h2>
- * Systems are automatically grouped into stages based on:
+ * The scheduler automatically groups systems into parallel stages based on their
+ * component access patterns. Systems that don't conflict (don't read/write the same
+ * components) will run in parallel automatically.
+ *
+ * <h2>Conflict Rules</h2>
+ * Two systems conflict and must run sequentially if:
  * <ul>
- *   <li>Explicit dependencies via {@code runAfter()}</li>
- *   <li>Implicit conflicts from component access patterns</li>
+ *   <li>Both write to the same component type</li>
+ *   <li>One writes to a component that the other reads</li>
  * </ul>
  *
  * <h2>Usage Example</h2>
  * <pre>{@code
+ * // Physics writes Position, AI writes Velocity, Audio has no conflicts
+ * // The scheduler automatically determines: Physics and AI can't run together
+ * // (if Physics reads Velocity), but Audio can run with either.
  * SystemScheduler scheduler = new SystemScheduler.Builder()
- *     .addSystem(inputSystem)
- *     .addSystem(physicsSystem)
- *     .addSystem(renderSystem)
- *     .runAfter(renderSystem, physicsSystem)  // Explicit dependency
+ *     .addSystem(physicsSystem)   // writes Position, reads Velocity
+ *     .addSystem(aiSystem)        // writes Velocity
+ *     .addSystem(audioSystem)     // reads AudioSource only
+ *     .addSystem(renderSystem)    // reads Position
  *     .build();
  *
- * // Execute all systems
- * scheduler.execute(world);
+ * // The scheduler automatically computes stages:
+ * // Stage 1: [aiSystem, audioSystem] - can run in parallel
+ * // Stage 2: [physicsSystem] - must wait for aiSystem (reads Velocity)
+ * // Stage 3: [renderSystem] - must wait for physicsSystem (reads Position)
  *
- * // Shutdown when done
- * scheduler.shutdown();
+ * scheduler.execute(world);
  * }</pre>
  *
+ * <h2>Explicit Ordering (Optional)</h2>
+ * Use {@code runInSequence()} only when you need to enforce a specific order
+ * beyond what the automatic conflict detection provides:
+ * <pre>{@code
+ * scheduler.runInSequence(inputSystem, physicsSystem);  // Input must run before Physics
+ * }</pre>
+ *
+ * <h2>Virtual Threads</h2>
+ * By default, the scheduler uses virtual threads (Project Loom) for lightweight
+ * concurrent execution. Virtual threads are ideal for ECS systems as they have
+ * minimal overhead and can scale to many concurrent tasks efficiently.
+ *
  * <h2>Thread Safety</h2>
- * The scheduler uses a configurable ExecutorService for parallel execution.
- * Systems in the same stage run concurrently if parallel mode is enabled.
+ * Systems in the same stage run concurrently using virtual threads.
+ * A custom ExecutorService can be provided if needed.
  */
 public final class SystemScheduler {
 
@@ -162,20 +183,33 @@ public final class SystemScheduler {
         }
 
         /**
-         * Specifies that one system must run after another.
+         * Specifies that the given systems must run in the specified order.
+         * Use this only when you need to enforce ordering beyond what the
+         * automatic conflict detection provides.
          *
-         * @param system the system that runs later
-         * @param dependency the system that must run first
+         * <p>Most of the time, you don't need this - the scheduler automatically
+         * determines the correct order based on component access patterns.</p>
+         *
+         * <h2>Usage Example</h2>
+         * <pre>{@code
+         * // Force Input to run before Physics even if they don't have
+         * // conflicting component access
+         * scheduler.runInSequence(inputSystem, physicsSystem);
+         * }</pre>
+         *
+         * @param systems the systems in the order they should execute
          * @return this builder for chaining
          */
-        public Builder runAfter(System system, System dependency) {
-            dependencies.computeIfAbsent(system, k -> new HashSet<>()).add(dependency);
+        public Builder runInSequence(System... systems) {
+            for (int i = 1; i < systems.length; i++) {
+                dependencies.computeIfAbsent(systems[i], k -> new HashSet<>()).add(systems[i - 1]);
+            }
             return this;
         }
 
         /**
          * Sets a custom executor service for parallel execution.
-         * If not set, a fixed thread pool based on available processors is used.
+         * If not set, a virtual thread per task executor is used (recommended).
          *
          * @param executor the executor service
          * @return this builder for chaining
@@ -206,7 +240,8 @@ public final class SystemScheduler {
          */
         public SystemScheduler build() {
             if (executor == null) {
-                executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+                // Use virtual threads for lightweight concurrent execution
+                executor = Executors.newVirtualThreadPerTaskExecutor();
             }
 
             // Check for circular dependencies

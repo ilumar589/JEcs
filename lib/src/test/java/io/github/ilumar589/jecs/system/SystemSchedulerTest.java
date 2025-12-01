@@ -110,7 +110,7 @@ class SystemSchedulerTest {
     // ==================== Explicit Dependency Tests ====================
 
     @Test
-    void explicitDependencyWithRunAfter() {
+    void explicitSequenceOrdering() {
         List<String> executionOrder = Collections.synchronizedList(new ArrayList<>());
 
         System first = new System.Builder("First")
@@ -124,7 +124,7 @@ class SystemSchedulerTest {
         SystemScheduler scheduler = new SystemScheduler.Builder()
                 .addSystem(first)
                 .addSystem(second)
-                .runAfter(second, first) // Second runs after First
+                .runInSequence(first, second) // First -> Second
                 .build();
         trackScheduler(scheduler);
 
@@ -136,7 +136,7 @@ class SystemSchedulerTest {
     }
 
     @Test
-    void multipleDependencies() {
+    void runInSequenceWithThreeSystems() {
         List<String> executionOrder = Collections.synchronizedList(new ArrayList<>());
 
         System a = new System.Builder("A").execute((w, q) -> executionOrder.add("A")).build();
@@ -147,16 +147,38 @@ class SystemSchedulerTest {
                 .addSystem(a)
                 .addSystem(b)
                 .addSystem(c)
-                .runAfter(c, a) // C runs after A
-                .runAfter(c, b) // C also runs after B
+                .runInSequence(a, b, c) // A -> B -> C
                 .build();
         trackScheduler(scheduler);
 
         scheduler.execute(world);
 
-        // C must be last, A and B can be in any order
         assertEquals(3, executionOrder.size());
+        assertEquals("A", executionOrder.get(0));
+        assertEquals("B", executionOrder.get(1));
         assertEquals("C", executionOrder.get(2));
+    }
+
+    @Test
+    void systemNotInSequenceRunsInParallel() {
+        List<String> executionOrder = Collections.synchronizedList(new ArrayList<>());
+
+        System a = new System.Builder("A").execute((w, q) -> executionOrder.add("A")).build();
+        System b = new System.Builder("B").execute((w, q) -> executionOrder.add("B")).build();
+        System parallel = new System.Builder("Parallel").execute((w, q) -> executionOrder.add("Parallel")).build();
+        System c = new System.Builder("C").execute((w, q) -> executionOrder.add("C")).build();
+
+        SystemScheduler scheduler = new SystemScheduler.Builder()
+                .addSystems(a, b, parallel, c)
+                .runInSequence(a, b, c) // A -> B -> C, Parallel can run with any
+                .build();
+        trackScheduler(scheduler);
+
+        // Parallel should be in the same stage as A (first stage with no dependencies)
+        assertEquals(3, scheduler.getStages().size()); // A+Parallel, B, C
+
+        scheduler.execute(world);
+        assertEquals(4, executionOrder.size());
     }
 
     // ==================== Automatic Conflict-Based Staging Tests ====================
@@ -252,9 +274,7 @@ class SystemSchedulerTest {
                     .addSystem(a)
                     .addSystem(b)
                     .addSystem(c)
-                    .runAfter(a, b)
-                    .runAfter(b, c)
-                    .runAfter(c, a) // Creates cycle: A -> B -> C -> A
+                    .runInSequence(a, b, c, a) // Creates cycle: A -> B -> C -> A
                     .build();
         });
     }
@@ -266,7 +286,7 @@ class SystemSchedulerTest {
         assertThrows(IllegalStateException.class, () -> {
             new SystemScheduler.Builder()
                     .addSystem(a)
-                    .runAfter(a, a) // A depends on itself
+                    .runInSequence(a, a) // A depends on itself
                     .build();
         });
     }
@@ -331,10 +351,10 @@ class SystemSchedulerTest {
     // ==================== Complex Dependency Chain Tests ====================
 
     @Test
-    void complexDependencyChain() {
+    void complexDependencyChainWithSequence() {
         List<String> executionOrder = Collections.synchronizedList(new ArrayList<>());
 
-        // Create a diamond dependency: D depends on B and C, B and C depend on A
+        // A -> B -> D and A -> C -> D using two sequences
         System a = new System.Builder("A").execute((w, q) -> executionOrder.add("A")).build();
         System b = new System.Builder("B").execute((w, q) -> executionOrder.add("B")).build();
         System c = new System.Builder("C").execute((w, q) -> executionOrder.add("C")).build();
@@ -345,10 +365,8 @@ class SystemSchedulerTest {
                 .addSystem(b)
                 .addSystem(c)
                 .addSystem(d)
-                .runAfter(b, a)
-                .runAfter(c, a)
-                .runAfter(d, b)
-                .runAfter(d, c)
+                .runInSequence(a, b, d)  // A -> B -> D
+                .runInSequence(a, c, d)  // A -> C -> D
                 .build();
         trackScheduler(scheduler);
 
@@ -362,20 +380,20 @@ class SystemSchedulerTest {
     }
 
     @Test
-    void mixedExplicitAndImplicitDependencies() {
+    void automaticParallelizationWithConflicts() {
         // Physics writes Position
         System physics = new System.Builder("Physics")
                 .withMutable(Position.class)
                 .execute((w, q) -> {})
                 .build();
 
-        // AI reads Position (implicit dependency on Physics)
+        // AI reads Position (implicit dependency on Physics - must run after)
         System ai = new System.Builder("AI")
                 .withReadOnly(Position.class)
                 .execute((w, q) -> {})
                 .build();
 
-        // Render reads Position and has explicit dependency on AI
+        // Render also reads Position (can run in parallel with AI)
         System render = new System.Builder("Render")
                 .withReadOnly(Position.class)
                 .execute((w, q) -> {})
@@ -385,12 +403,13 @@ class SystemSchedulerTest {
                 .addSystem(physics)
                 .addSystem(ai)
                 .addSystem(render)
-                .runAfter(render, ai) // Explicit: Render after AI
                 .build();
         trackScheduler(scheduler);
 
-        // Should have 3 stages: Physics, AI, Render
-        assertEquals(3, scheduler.getStages().size());
+        // Should have 2 stages: Physics alone, then AI and Render together
+        assertEquals(2, scheduler.getStages().size());
+        assertEquals(1, scheduler.getStages().get(0).size()); // Physics
+        assertEquals(2, scheduler.getStages().get(1).size()); // AI + Render in parallel
     }
 
     // ==================== Stage Tests ====================
@@ -507,7 +526,7 @@ class SystemSchedulerTest {
                 })
                 .build();
 
-        // Health system - reads and writes Health
+        // Health system - reads and writes Health (no conflict with physics or render)
         System health = new System.Builder("Health")
                 .withMutable(Health.class)
                 .execute((w, q) -> {
@@ -520,7 +539,7 @@ class SystemSchedulerTest {
                 })
                 .build();
 
-        // Render system - reads Position (must run after physics)
+        // Render system - reads Position (automatic dependency on physics due to conflict)
         System render = new System.Builder("Render")
                 .withReadOnly(Position.class)
                 .execute((w, q) -> {
@@ -528,10 +547,13 @@ class SystemSchedulerTest {
                 })
                 .build();
 
+        // The scheduler automatically determines:
+        // - Input has no conflicts, can run first
+        // - Physics writes Position, must run before Render (which reads Position)
+        // - Health has no conflicts with others, can run in parallel
         SystemScheduler scheduler = new SystemScheduler.Builder()
                 .addSystems(input, physics, health, render)
-                .runAfter(physics, input)  // Physics after input
-                .runAfter(render, physics) // Render after physics
+                .runInSequence(input, physics) // Explicit: physics after input
                 .build();
         trackScheduler(scheduler);
 
@@ -553,5 +575,24 @@ class SystemSchedulerTest {
 
         assertTrue(healthValues.contains(100)); // Already max
         assertTrue(healthValues.contains(51));  // 50 + 1
+    }
+
+    @Test
+    void virtualThreadsAreUsedByDefault() {
+        AtomicInteger count = new AtomicInteger(0);
+
+        System system = new System.Builder("Counter")
+                .execute((w, q) -> count.incrementAndGet())
+                .build();
+
+        SystemScheduler scheduler = new SystemScheduler.Builder()
+                .addSystem(system)
+                .build();
+        trackScheduler(scheduler);
+
+        scheduler.execute(world);
+
+        assertEquals(1, count.get());
+        assertTrue(scheduler.isParallel());
     }
 }

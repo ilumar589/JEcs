@@ -15,42 +15,44 @@
  *
  * <h2>Usage Example</h2>
  * <pre>{@code
- * // Define a physics system
+ * // Define systems with their component access patterns
  * System physics = new System.Builder("Physics")
  *     .withMutable(Position.class)
  *     .withReadOnly(Velocity.class)
  *     .execute((world, query) -> {
  *         query.forEachWithAccess(Position.class, Velocity.class, (pos, vel) -> {
- *             pos.update(p -> new Position(
- *                 p.x() + vel.get().dx(),
- *                 p.y() + vel.get().dy(),
- *                 p.z() + vel.get().dz()
+ *             Position current = pos.get();
+ *             Velocity velocity = vel.get();
+ *             pos.set(new Position(
+ *                 current.x() + velocity.dx(),
+ *                 current.y() + velocity.dy(),
+ *                 current.z() + velocity.dz()
  *             ));
  *         });
  *     })
  *     .build();
  *
- * // Create scheduler and execute
+ * // The scheduler automatically determines which systems can run in parallel
  * SystemScheduler scheduler = new SystemScheduler.Builder()
- *     .addSystem(inputSystem)
  *     .addSystem(physics)
+ *     .addSystem(aiSystem)
  *     .addSystem(renderSystem)
- *     .runAfter(renderSystem, physics)
  *     .build();
  *
  * scheduler.execute(world);
  * }</pre>
  *
- * <h2>Parallelization</h2>
- * Two systems can run in parallel if:
+ * <h2>Automatic Parallelization</h2>
+ * The scheduler automatically determines which systems can run in parallel based on
+ * their component access patterns. Two systems can run in parallel if:
  * <ul>
  *   <li>They don't write to the same component types</li>
  *   <li>One doesn't write to a component the other reads</li>
  * </ul>
  *
- * <h2>Thread Safety</h2>
- * Systems in the same stage run in parallel using a configurable ExecutorService.
- * The default thread pool size is Runtime.availableProcessors().
+ * <h2>Virtual Threads</h2>
+ * The scheduler uses virtual threads (Project Loom) by default for lightweight
+ * concurrent execution with minimal overhead.
  *
  * <h2>Null Safety</h2>
  * This package uses JSpecify annotations for null safety.
