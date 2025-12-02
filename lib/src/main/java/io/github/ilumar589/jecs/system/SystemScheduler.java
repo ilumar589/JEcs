@@ -318,9 +318,7 @@ public final class SystemScheduler {
          * @return this builder for chaining
          */
         public Builder addSystems(System... systems) {
-            for (System system : systems) {
-                this.systems.add(system);
-            }
+            this.systems.addAll(Arrays.asList(systems));
             return this;
         }
 
