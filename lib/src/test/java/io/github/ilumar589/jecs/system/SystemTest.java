@@ -290,4 +290,73 @@ class SystemTest {
         assertTrue(str.contains("Physics"));
         assertTrue(str.contains("mutable="));
     }
+
+    // ==================== SystemMode Tests ====================
+
+    @Test
+    void defaultModeIsUpdate() {
+        System system = new System.Builder("Test")
+                .execute((w, q) -> {})
+                .build();
+
+        assertEquals(SystemMode.UPDATE, system.getMode());
+    }
+
+    @Test
+    void startupModeCanBeSet() {
+        System system = new System.Builder("Startup")
+                .mode(SystemMode.STARTUP)
+                .execute((w, q) -> {})
+                .build();
+
+        assertEquals(SystemMode.STARTUP, system.getMode());
+    }
+
+    @Test
+    void updateModeCanBeSet() {
+        System system = new System.Builder("Update")
+                .mode(SystemMode.UPDATE)
+                .execute((w, q) -> {})
+                .build();
+
+        assertEquals(SystemMode.UPDATE, system.getMode());
+    }
+
+    @Test
+    void shutdownModeCanBeSet() {
+        System system = new System.Builder("Shutdown")
+                .mode(SystemMode.SHUTDOWN)
+                .execute((w, q) -> {})
+                .build();
+
+        assertEquals(SystemMode.SHUTDOWN, system.getMode());
+    }
+
+    @Test
+    void modeCanBeCombinedWithOtherBuilderMethods() {
+        System system = new System.Builder("Complex")
+                .mode(SystemMode.STARTUP)
+                .withMutable(Position.class)
+                .withReadOnly(Velocity.class)
+                .without(Dead.class)
+                .execute((w, q) -> {})
+                .build();
+
+        assertEquals(SystemMode.STARTUP, system.getMode());
+        assertTrue(system.getAccess().getMutable().contains(Position.class));
+        assertTrue(system.getAccess().getReadOnly().contains(Velocity.class));
+        assertTrue(system.getAccess().getExcluded().contains(Dead.class));
+    }
+
+    @Test
+    void modeCanBeChainedWithExecute() {
+        System system = new System.Builder("Test")
+                .withMutable(Position.class)
+                .mode(SystemMode.SHUTDOWN)
+                .execute((w, q) -> {})
+                .build();
+
+        assertEquals(SystemMode.SHUTDOWN, system.getMode());
+        assertTrue(system.getAccess().getMutable().contains(Position.class));
+    }
 }

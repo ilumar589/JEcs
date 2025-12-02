@@ -39,11 +39,13 @@ public final class System {
     private final String name;
     private final ComponentAccess access;
     private final BiConsumer<EcsWorld, ComponentQuery> executor;
+    private final SystemMode mode;
 
-    private System(String name, ComponentAccess access, BiConsumer<EcsWorld, ComponentQuery> executor) {
+    private System(String name, ComponentAccess access, BiConsumer<EcsWorld, ComponentQuery> executor, SystemMode mode) {
         this.name = name;
         this.access = access;
         this.executor = executor;
+        this.mode = mode;
     }
 
     /**
@@ -62,6 +64,21 @@ public final class System {
      */
     public ComponentAccess getAccess() {
         return access;
+    }
+
+    /**
+     * Returns the execution mode for this system.
+     * The mode determines when this system should run in the application lifecycle:
+     * <ul>
+     *   <li>{@link SystemMode#STARTUP} - Run once during initialization</li>
+     *   <li>{@link SystemMode#UPDATE} - Run repeatedly in the game loop (default)</li>
+     *   <li>{@link SystemMode#SHUTDOWN} - Run once during cleanup</li>
+     * </ul>
+     *
+     * @return the system mode
+     */
+    public SystemMode getMode() {
+        return mode;
     }
 
     /**
@@ -123,6 +140,7 @@ public final class System {
         private final String name;
         private final ComponentAccess.Builder accessBuilder = new ComponentAccess.Builder();
         private BiConsumer<EcsWorld, ComponentQuery> executor;
+        private SystemMode mode = SystemMode.UPDATE;
 
         /**
          * Creates a new System builder with the given name.
@@ -135,6 +153,43 @@ public final class System {
                 throw new IllegalArgumentException("System name cannot be null or empty");
             }
             this.name = name;
+        }
+
+        /**
+         * Sets the execution mode for this system.
+         * The mode determines when this system should run in the application lifecycle:
+         * <ul>
+         *   <li>{@link SystemMode#STARTUP} - Run once during initialization</li>
+         *   <li>{@link SystemMode#UPDATE} - Run repeatedly in the game loop (default)</li>
+         *   <li>{@link SystemMode#SHUTDOWN} - Run once during cleanup</li>
+         * </ul>
+         *
+         * <h2>Usage Example</h2>
+         * <pre>{@code
+         * // Startup system - runs once
+         * System loader = new System.Builder("ResourceLoader")
+         *     .mode(SystemMode.STARTUP)
+         *     .execute((w, q) -> {
+         *         // load resources
+         *     })
+         *     .build();
+         *
+         * // Update system - runs every frame (default)
+         * System physics = new System.Builder("Physics")
+         *     .mode(SystemMode.UPDATE)
+         *     .withMutable(Position.class)
+         *     .execute((w, q) -> {
+         *         // update physics
+         *     })
+         *     .build();
+         * }</pre>
+         *
+         * @param mode the system mode
+         * @return this builder for chaining
+         */
+        public Builder mode(SystemMode mode) {
+            this.mode = mode;
+            return this;
         }
 
         /**
@@ -229,7 +284,7 @@ public final class System {
             if (executor == null) {
                 throw new IllegalStateException("System executor must be set");
             }
-            return new System(name, accessBuilder.build(), executor);
+            return new System(name, accessBuilder.build(), executor, mode);
         }
     }
 }
