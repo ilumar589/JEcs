@@ -6,12 +6,52 @@ import java.util.*;
 import java.util.concurrent.*;
 
 /**
- * Schedules and executes systems according to their component access patterns.
+ * Schedules and executes systems according to their component access patterns and modes.
  * Automatically determines which systems can run in parallel.
+ *
+ * <h2>System Modes</h2>
+ * The scheduler supports three execution modes via {@link SystemMode}:
+ * <ul>
+ *   <li>{@link SystemMode#STARTUP} - Systems that run once during initialization</li>
+ *   <li>{@link SystemMode#UPDATE} - Systems that run repeatedly in the game loop (default)</li>
+ *   <li>{@link SystemMode#SHUTDOWN} - Systems that run once during cleanup</li>
+ * </ul>
+ *
+ * <h2>Game Loop Integration</h2>
+ * <pre>{@code
+ * // Define startup systems
+ * System resourceLoader = new System.Builder("ResourceLoader")
+ *     .mode(SystemMode.STARTUP)
+ *     .execute((w, q) -> {
+ *         // load resources
+ *     })
+ *     .build();
+ *
+ * // Define update systems (default mode)
+ * System physics = new System.Builder("Physics")
+ *     .withMutable(Position.class)
+ *     .withReadOnly(Velocity.class)
+ *     .execute((w, q) -> {
+ *         // physics update
+ *     })
+ *     .build();
+ *
+ * // Build scheduler
+ * SystemScheduler scheduler = new SystemScheduler.Builder()
+ *     .addSystems(resourceLoader, physics)
+ *     .build();
+ *
+ * // Game lifecycle
+ * scheduler.executeStartup(world);    // Run once at init
+ * while (running) {
+ *     scheduler.executeUpdate(world);  // Run every frame
+ * }
+ * scheduler.executeShutdown(world);   // Run once at cleanup
+ * }</pre>
  *
  * <h2>Automatic Parallelization</h2>
  * The scheduler automatically groups systems into parallel stages based on their
- * component access patterns. Systems that don't conflict (don't read/write the same
+ * component access patterns. Systems that do not conflict (do not read/write the same
  * components) will run in parallel automatically.
  *
  * <h2>Conflict Rules</h2>
@@ -60,11 +100,22 @@ import java.util.concurrent.*;
 public final class SystemScheduler {
 
     private final List<SystemStage> stages;
+    private final List<SystemStage> startupStages;
+    private final List<SystemStage> updateStages;
+    private final List<SystemStage> shutdownStages;
     private final ExecutorService executor;
     private final boolean parallel;
 
-    private SystemScheduler(List<SystemStage> stages, ExecutorService executor, boolean parallel) {
+    private SystemScheduler(List<SystemStage> stages, 
+                           List<SystemStage> startupStages,
+                           List<SystemStage> updateStages,
+                           List<SystemStage> shutdownStages,
+                           ExecutorService executor, 
+                           boolean parallel) {
         this.stages = Collections.unmodifiableList(new ArrayList<>(stages));
+        this.startupStages = Collections.unmodifiableList(new ArrayList<>(startupStages));
+        this.updateStages = Collections.unmodifiableList(new ArrayList<>(updateStages));
+        this.shutdownStages = Collections.unmodifiableList(new ArrayList<>(shutdownStages));
         this.executor = executor;
         this.parallel = parallel;
     }
@@ -73,10 +124,74 @@ public final class SystemScheduler {
      * Executes all systems in order, respecting stage boundaries.
      * Systems within a stage may run in parallel if parallel mode is enabled.
      *
+     * <p>This method executes all systems regardless of their mode. For mode-specific
+     * execution in a game loop, prefer using {@link #executeStartup(EcsWorld)},
+     * {@link #executeUpdate(EcsWorld)}, and {@link #executeShutdown(EcsWorld)}.</p>
+     *
      * @param world the ECS world to operate on
      */
     public void execute(EcsWorld world) {
-        for (SystemStage stage : stages) {
+        executeStages(stages, world);
+    }
+
+    /**
+     * Executes only systems with {@link SystemMode#STARTUP} mode.
+     * These systems are intended to run once during initialization.
+     *
+     * <h2>Usage Example</h2>
+     * <pre>{@code
+     * // In game initialization
+     * scheduler.executeStartup(world);
+     *
+     * // In game loop
+     * while (running) {
+     *     scheduler.executeUpdate(world);
+     * }
+     * }</pre>
+     *
+     * @param world the ECS world to operate on
+     */
+    public void executeStartup(EcsWorld world) {
+        executeStages(startupStages, world);
+    }
+
+    /**
+     * Executes only systems with {@link SystemMode#UPDATE} mode.
+     * These systems are intended to run repeatedly in the game loop.
+     *
+     * <h2>Usage Example</h2>
+     * <pre>{@code
+     * // In game loop
+     * while (running) {
+     *     scheduler.executeUpdate(world);
+     * }
+     * }</pre>
+     *
+     * @param world the ECS world to operate on
+     */
+    public void executeUpdate(EcsWorld world) {
+        executeStages(updateStages, world);
+    }
+
+    /**
+     * Executes only systems with {@link SystemMode#SHUTDOWN} mode.
+     * These systems are intended to run once during cleanup.
+     *
+     * <h2>Usage Example</h2>
+     * <pre>{@code
+     * // On game exit
+     * scheduler.executeShutdown(world);
+     * scheduler.shutdown();
+     * }</pre>
+     *
+     * @param world the ECS world to operate on
+     */
+    public void executeShutdown(EcsWorld world) {
+        executeStages(shutdownStages, world);
+    }
+
+    private void executeStages(List<SystemStage> stagesToExecute, EcsWorld world) {
+        for (SystemStage stage : stagesToExecute) {
             if (parallel && stage.size() > 1) {
                 executeParallel(stage, world);
             } else {
@@ -111,12 +226,39 @@ public final class SystemScheduler {
     }
 
     /**
-     * Returns the computed stages.
+     * Returns the computed stages for all systems.
      *
      * @return unmodifiable list of stages
      */
     public List<SystemStage> getStages() {
         return stages;
+    }
+
+    /**
+     * Returns the computed stages for startup systems only.
+     *
+     * @return unmodifiable list of startup stages
+     */
+    public List<SystemStage> getStartupStages() {
+        return startupStages;
+    }
+
+    /**
+     * Returns the computed stages for update systems only.
+     *
+     * @return unmodifiable list of update stages
+     */
+    public List<SystemStage> getUpdateStages() {
+        return updateStages;
+    }
+
+    /**
+     * Returns the computed stages for shutdown systems only.
+     *
+     * @return unmodifiable list of shutdown stages
+     */
+    public List<SystemStage> getShutdownStages() {
+        return shutdownStages;
     }
 
     /**
@@ -234,6 +376,7 @@ public final class SystemScheduler {
         /**
          * Builds the SystemScheduler.
          * Computes stages based on dependencies and component access conflicts.
+         * Each system mode (STARTUP, UPDATE, SHUTDOWN) has its own independent stages.
          *
          * @return the built SystemScheduler
          * @throws IllegalStateException if circular dependencies are detected
@@ -247,10 +390,29 @@ public final class SystemScheduler {
             // Check for circular dependencies
             detectCircularDependencies();
 
-            // Compute stages
-            List<SystemStage> stages = computeStages();
+            // Compute stages for all systems (backward compatibility)
+            List<SystemStage> stages = computeStages(systems);
 
-            return new SystemScheduler(stages, executor, parallel);
+            // Filter systems by mode and compute separate stages
+            List<System> startupSystems = filterByMode(SystemMode.STARTUP);
+            List<System> updateSystems = filterByMode(SystemMode.UPDATE);
+            List<System> shutdownSystems = filterByMode(SystemMode.SHUTDOWN);
+
+            List<SystemStage> startupStages = computeStages(startupSystems);
+            List<SystemStage> updateStages = computeStages(updateSystems);
+            List<SystemStage> shutdownStages = computeStages(shutdownSystems);
+
+            return new SystemScheduler(stages, startupStages, updateStages, shutdownStages, executor, parallel);
+        }
+
+        private List<System> filterByMode(SystemMode mode) {
+            List<System> filtered = new ArrayList<>();
+            for (System system : systems) {
+                if (system.getMode() == mode) {
+                    filtered.add(system);
+                }
+            }
+            return filtered;
         }
 
         private void detectCircularDependencies() {
@@ -286,20 +448,33 @@ public final class SystemScheduler {
             return false;
         }
 
-        private List<SystemStage> computeStages() {
+        private List<SystemStage> computeStages(List<System> systemsToSchedule) {
+            if (systemsToSchedule.isEmpty()) {
+                return Collections.emptyList();
+            }
+
+            // Create a set for quick lookup
+            Set<System> systemSet = new HashSet<>(systemsToSchedule);
+
             // Build complete dependency graph including access conflicts
             Map<System, Set<System>> fullDeps = new HashMap<>();
-            for (System system : systems) {
-                Set<System> deps = new HashSet<>(dependencies.getOrDefault(system, Collections.emptySet()));
+            for (System system : systemsToSchedule) {
+                // Only include dependencies that are in the same system set
+                Set<System> deps = new HashSet<>();
+                for (System dep : dependencies.getOrDefault(system, Collections.emptySet())) {
+                    if (systemSet.contains(dep)) {
+                        deps.add(dep);
+                    }
+                }
                 fullDeps.put(system, deps);
             }
 
             // Add implicit dependencies from access conflicts
             // A system must wait for any earlier conflicting system
-            for (int i = 0; i < systems.size(); i++) {
-                System current = systems.get(i);
+            for (int i = 0; i < systemsToSchedule.size(); i++) {
+                System current = systemsToSchedule.get(i);
                 for (int j = 0; j < i; j++) {
-                    System earlier = systems.get(j);
+                    System earlier = systemsToSchedule.get(j);
                     if (current.conflictsWith(earlier)) {
                         // Check if there isn't already a dependency path
                         fullDeps.computeIfAbsent(current, k -> new HashSet<>()).add(earlier);
@@ -310,7 +485,7 @@ public final class SystemScheduler {
             // Topological sort with stage assignment
             List<SystemStage> stages = new ArrayList<>();
             Set<System> scheduled = new HashSet<>();
-            Set<System> remaining = new HashSet<>(systems);
+            Set<System> remaining = new HashSet<>(systemsToSchedule);
 
             while (!remaining.isEmpty()) {
                 // Find all systems whose dependencies are satisfied

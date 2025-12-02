@@ -8,15 +8,42 @@
  * <h2>Key Classes</h2>
  * <ul>
  *   <li>{@link io.github.ilumar589.jecs.system.System} - Core system class with builder pattern</li>
+ *   <li>{@link io.github.ilumar589.jecs.system.SystemMode} - Enum defining when systems run (STARTUP, UPDATE, SHUTDOWN)</li>
  *   <li>{@link io.github.ilumar589.jecs.system.ComponentAccess} - Describes read/write/exclude requirements</li>
  *   <li>{@link io.github.ilumar589.jecs.system.SystemScheduler} - Schedules and executes systems</li>
  *   <li>{@link io.github.ilumar589.jecs.system.SystemStage} - Represents a group of parallel-safe systems</li>
  * </ul>
  *
- * <h2>Usage Example</h2>
+ * <h2>System Modes</h2>
+ * Systems can be configured to run at different lifecycle stages:
+ * <ul>
+ *   <li>{@link io.github.ilumar589.jecs.system.SystemMode#STARTUP} - Run once during initialization</li>
+ *   <li>{@link io.github.ilumar589.jecs.system.SystemMode#UPDATE} - Run repeatedly in game loop (default)</li>
+ *   <li>{@link io.github.ilumar589.jecs.system.SystemMode#SHUTDOWN} - Run once during cleanup</li>
+ * </ul>
+ *
+ * <h2>Complete Usage Example</h2>
  * <pre>{@code
- * // Define systems with their component access patterns
+ * // Define startup systems (run once at initialization)
+ * System resourceLoader = new System.Builder("ResourceLoader")
+ *     .mode(SystemMode.STARTUP)
+ *     .execute((world, query) -> {
+ *         // Load textures, sounds, etc.
+ *     })
+ *     .build();
+ *
+ * System worldInitializer = new System.Builder("WorldInitializer")
+ *     .mode(SystemMode.STARTUP)
+ *     .withMutable(Position.class, Health.class)
+ *     .execute((world, query) -> {
+ *         // Spawn initial entities
+ *         world.spawn(new Position(0, 0, 0), new Health(100, 100));
+ *     })
+ *     .build();
+ *
+ * // Define update systems (run every frame)
  * System physics = new System.Builder("Physics")
+ *     .mode(SystemMode.UPDATE)  // Optional, UPDATE is default
  *     .withMutable(Position.class)
  *     .withReadOnly(Velocity.class)
  *     .execute((world, query) -> {
@@ -32,14 +59,37 @@
  *     })
  *     .build();
  *
- * // The scheduler automatically determines which systems can run in parallel
- * SystemScheduler scheduler = new SystemScheduler.Builder()
- *     .addSystem(physics)
- *     .addSystem(aiSystem)
- *     .addSystem(renderSystem)
+ * System render = new System.Builder("Render")
+ *     .withReadOnly(Position.class)
+ *     .execute((world, query) -> {
+ *         // Render entities
+ *     })
  *     .build();
  *
- * scheduler.execute(world);
+ * // Define shutdown systems (run once at cleanup)
+ * System saveGame = new System.Builder("SaveGame")
+ *     .mode(SystemMode.SHUTDOWN)
+ *     .execute((world, query) -> {
+ *         // Save game state
+ *     })
+ *     .build();
+ *
+ * // Build the scheduler with all systems
+ * SystemScheduler scheduler = new SystemScheduler.Builder()
+ *     .addSystems(resourceLoader, worldInitializer, physics, render, saveGame)
+ *     .build();
+ *
+ * // Game initialization
+ * scheduler.executeStartup(world);
+ *
+ * // Game loop
+ * while (running) {
+ *     scheduler.executeUpdate(world);
+ * }
+ *
+ * // Game cleanup
+ * scheduler.executeShutdown(world);
+ * scheduler.shutdown();
  * }</pre>
  *
  * <h2>Automatic Parallelization</h2>
