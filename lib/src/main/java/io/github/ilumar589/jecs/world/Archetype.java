@@ -511,7 +511,7 @@ public final class Archetype {
         // Use thread-local array to avoid allocation in hot paths
         int size = columns.size();
         Map<Integer, Object[]> argsCache = THREAD_LOCAL_ARGS.get();
-        Object[] args = argsCache.computeIfAbsent(size, Object[]::new);
+        Object[] args = argsCache.computeIfAbsent(size, k -> new Object[k]);
         
         for (int i = 0; i < size; i++) {
             FieldColumn column = columns.get(i);

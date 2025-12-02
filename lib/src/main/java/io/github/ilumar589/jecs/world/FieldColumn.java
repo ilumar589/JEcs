@@ -137,6 +137,10 @@ public final class FieldColumn {
      * <h2>Performance Note</h2>
      * This method uses pattern matching to avoid boxing overhead by directly 
      * calling typed read methods on the GlobalArray implementation.
+     * 
+     * <h2>Exhaustiveness</h2>
+     * The switch is exhaustive because {@link GlobalArray} is a sealed interface.
+     * The compiler ensures all permitted implementations are handled.
      *
      * @param globalArray the GlobalArray for this field type
      * @param entityIndex the index of the entity
@@ -145,6 +149,7 @@ public final class FieldColumn {
     public Object readPlain(GlobalArray globalArray, int entityIndex) {
         int index = globalOffset + entityIndex;
         // Use pattern matching to avoid boxing in hot paths
+        // Switch is exhaustive - GlobalArray is a sealed interface
         return switch (globalArray) {
             case GlobalArray.IntArray arr -> arr.readPlain(index);
             case GlobalArray.FloatArray arr -> arr.readPlain(index);
@@ -165,14 +170,24 @@ public final class FieldColumn {
      * <h2>Performance Note</h2>
      * This method uses pattern matching to avoid unboxing overhead by directly 
      * calling typed write methods on the GlobalArray implementation.
+     * 
+     * <h2>Exhaustiveness</h2>
+     * The switch is exhaustive because {@link GlobalArray} is a sealed interface.
+     * The compiler ensures all permitted implementations are handled.
+     * 
+     * <h2>Type Safety</h2>
+     * Callers must ensure the value type matches the GlobalArray type.
+     * A ClassCastException will be thrown if types don't match.
      *
      * @param globalArray the GlobalArray for this field type
      * @param entityIndex the index of the entity
-     * @param value the value to write
+     * @param value the value to write (must match the GlobalArray's element type)
+     * @throws ClassCastException if the value type doesn't match the array type
      */
     public void writeRelease(GlobalArray globalArray, int entityIndex, Object value) {
         int index = globalOffset + entityIndex;
         // Use pattern matching to avoid boxing/unboxing in hot paths
+        // Switch is exhaustive - GlobalArray is a sealed interface
         switch (globalArray) {
             case GlobalArray.IntArray arr -> arr.writeRelease(index, (int) value);
             case GlobalArray.FloatArray arr -> arr.writeRelease(index, (float) value);
