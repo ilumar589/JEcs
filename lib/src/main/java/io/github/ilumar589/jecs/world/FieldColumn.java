@@ -8,7 +8,7 @@ import java.lang.reflect.RecordComponent;
  * Represents a column of primitive values for a single field across all entities.
  * Each FieldColumn tracks:
  * <ul>
- *   <li>The primitive type of the field</li>
+ *   <li>The field class (e.g., int.class, float.class)</li>
  *   <li>The offset in the global array where this field's data starts</li>
  *   <li>A MethodHandle to extract the field value from component instances</li>
  * </ul>
@@ -29,7 +29,7 @@ import java.lang.reflect.RecordComponent;
  */
 public final class FieldColumn {
     private final FieldKey fieldKey;
-    private final PrimitiveType type;
+    private final Class<?> fieldClass;
     private final int fieldIndex;
     private final MethodHandle fieldGetter;
     private int globalOffset;
@@ -49,15 +49,14 @@ public final class FieldColumn {
         String fieldName = recordComponent.getName();
         Class<?> fieldType = recordComponent.getType();
         
-        PrimitiveType primitiveType = PrimitiveType.fromClass(fieldType);
-        if (primitiveType == null) {
+        if (!GlobalArray.isSupported(fieldType)) {
             throw new IllegalArgumentException(
                 "Unsupported field type: " + fieldType.getName() + 
                 " for field " + fieldName + " in " + componentType.getName());
         }
         
-        this.fieldKey = new FieldKey(componentType, fieldName, primitiveType);
-        this.type = primitiveType;
+        this.fieldKey = new FieldKey(componentType, fieldName, fieldType);
+        this.fieldClass = fieldType;
         this.fieldIndex = fieldIndex;
         this.globalOffset = globalOffset;
         
@@ -80,12 +79,12 @@ public final class FieldColumn {
     }
 
     /**
-     * Returns the primitive type of this field.
+     * Returns the field class of this field (e.g., int.class, float.class).
      *
-     * @return the primitive type
+     * @return the field class
      */
-    public PrimitiveType getType() {
-        return type;
+    public Class<?> getFieldClass() {
+        return fieldClass;
     }
 
     /**
@@ -132,37 +131,37 @@ public final class FieldColumn {
     }
 
     /**
-     * Reads a value from the global array using plain read semantics.
+     * Reads a value from the GlobalArray using plain read semantics.
      * No memory barriers are used, providing maximum read performance.
      *
-     * @param globalArray the global array for this primitive type
+     * @param globalArray the GlobalArray for this field type
      * @param entityIndex the index of the entity
      * @return the value at the specified entity index
      */
-    public Object readPlain(Object globalArray, int entityIndex) {
-        return type.readPlain(globalArray, globalOffset + entityIndex);
+    public Object readPlain(GlobalArray globalArray, int entityIndex) {
+        return globalArray.readPlainBoxed(globalOffset + entityIndex);
     }
 
     /**
-     * Writes a value to the global array using release semantics.
+     * Writes a value to the GlobalArray using release semantics.
      * Ensures proper visibility to other threads.
      *
-     * @param globalArray the global array for this primitive type
+     * @param globalArray the GlobalArray for this field type
      * @param entityIndex the index of the entity
      * @param value the value to write
      */
-    public void writeRelease(Object globalArray, int entityIndex, Object value) {
-        type.writeRelease(globalArray, globalOffset + entityIndex, value);
+    public void writeRelease(GlobalArray globalArray, int entityIndex, Object value) {
+        globalArray.writeReleaseBoxed(globalOffset + entityIndex, value);
     }
 
     /**
-     * Writes a component's field value to the global array.
+     * Writes a component's field value to the GlobalArray.
      *
-     * @param globalArray the global array for this primitive type
+     * @param globalArray the GlobalArray for this field type
      * @param entityIndex the index of the entity
      * @param component the component to extract the value from
      */
-    public void writeFromComponent(Object globalArray, int entityIndex, Object component) {
+    public void writeFromComponent(GlobalArray globalArray, int entityIndex, Object component) {
         Object value = extractValue(component);
         writeRelease(globalArray, entityIndex, value);
     }

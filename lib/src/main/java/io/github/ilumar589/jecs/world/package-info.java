@@ -7,7 +7,7 @@
  *   <li>{@link io.github.ilumar589.jecs.world.Archetype} - Groups entities with same component types using primitive decomposition</li>
  *   <li>{@link io.github.ilumar589.jecs.world.ComponentReader} - Read-only access to components (no memory barriers)</li>
  *   <li>{@link io.github.ilumar589.jecs.world.ComponentWriter} - Mutable access to components (release semantics)</li>
- *   <li>{@link io.github.ilumar589.jecs.world.PrimitiveType} - Supported primitive types with VarHandles</li>
+ *   <li>{@link io.github.ilumar589.jecs.world.GlobalArray} - Sealed interface for type-safe primitive array storage with VarHandles</li>
  *   <li>{@link io.github.ilumar589.jecs.world.FieldColumn} - Field metadata and array offset tracking</li>
  *   <li>{@link io.github.ilumar589.jecs.world.FieldKey} - Unique field identification across component types</li>
  * </ul>

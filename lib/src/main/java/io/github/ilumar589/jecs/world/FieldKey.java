@@ -11,24 +11,24 @@ package io.github.ilumar589.jecs.world;
  * record ComponentB(int health) {}
  * 
  * // These create different FieldKeys:
- * FieldKey keyA = new FieldKey(ComponentA.class, "health", PrimitiveType.INT);
- * FieldKey keyB = new FieldKey(ComponentB.class, "health", PrimitiveType.INT);
+ * FieldKey keyA = new FieldKey(ComponentA.class, "health", int.class);
+ * FieldKey keyB = new FieldKey(ComponentB.class, "health", int.class);
  * // keyA.equals(keyB) returns false
  * }</pre>
  *
  * @param componentType the class of the component containing the field
  * @param fieldName the name of the field
- * @param primitiveType the primitive type of the field
+ * @param fieldClass the class of the field (e.g., int.class, float.class)
  */
-public record FieldKey(Class<?> componentType, String fieldName, PrimitiveType primitiveType) {
+public record FieldKey(Class<?> componentType, String fieldName, Class<?> fieldClass) {
     
     /**
      * Creates a new FieldKey.
      *
      * @param componentType the class of the component containing the field
      * @param fieldName the name of the field
-     * @param primitiveType the primitive type of the field
-     * @throws IllegalArgumentException if any parameter is null
+     * @param fieldClass the class of the field
+     * @throws IllegalArgumentException if any parameter is null or if fieldClass is not supported
      */
     public FieldKey {
         if (componentType == null) {
@@ -37,13 +37,16 @@ public record FieldKey(Class<?> componentType, String fieldName, PrimitiveType p
         if (fieldName == null || fieldName.isEmpty()) {
             throw new IllegalArgumentException("fieldName must not be null or empty");
         }
-        if (primitiveType == null) {
-            throw new IllegalArgumentException("primitiveType must not be null");
+        if (fieldClass == null) {
+            throw new IllegalArgumentException("fieldClass must not be null");
+        }
+        if (!GlobalArray.isSupported(fieldClass)) {
+            throw new IllegalArgumentException("Unsupported field type: " + fieldClass.getName());
         }
     }
     
     @Override
     public String toString() {
-        return componentType.getSimpleName() + "." + fieldName + "(" + primitiveType + ")";
+        return componentType.getSimpleName() + "." + fieldName + "(" + fieldClass.getSimpleName() + ")";
     }
 }
