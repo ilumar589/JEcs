@@ -46,6 +46,9 @@ public class LargeScaleSystemBenchmark {
     private List<System> startupSystems;
     private List<System> updateSystems;
 
+    // Volatile sink to prevent dead code elimination in benchmark lambdas
+    private volatile double sink;
+
     @Setup(Level.Trial)
     public void setup() {
         world = new EcsWorld();
@@ -117,7 +120,7 @@ public class LargeScaleSystemBenchmark {
                             .execute((w, q) -> {
                                 q.forEach(Position.class, pos -> {
                                     // Simulate resource loading
-                                    double dummy = pos.x() + pos.y();
+                                    sink = pos.x() + pos.y();
                                 });
                             })
                             .build();
@@ -141,7 +144,7 @@ public class LargeScaleSystemBenchmark {
                             .mode(SystemMode.STARTUP)
                             .execute((w, q) -> {
                                 // Simulate config loading
-                                int dummy = 1 + 2;
+                                sink = 1 + 2;
                             })
                             .build();
                 }
@@ -151,7 +154,7 @@ public class LargeScaleSystemBenchmark {
                             .mode(SystemMode.STARTUP)
                             .execute((w, q) -> {
                                 // Simulate audio setup
-                                double volume = 0.8;
+                                sink = 0.8;
                             })
                             .build();
                 }
@@ -163,7 +166,7 @@ public class LargeScaleSystemBenchmark {
                             .execute((w, q) -> {
                                 q.forEach(Velocity.class, vel -> {
                                     // Simulate input configuration
-                                    double sensitivity = vel.dx();
+                                    sink = vel.dx();
                                 });
                             })
                             .build();
@@ -191,7 +194,7 @@ public class LargeScaleSystemBenchmark {
                     .withReadOnly(Position.class)
                     .execute((w, q) -> {
                         q.forEach(Position.class, pos -> {
-                            double dummy = pos.x() + pos.y() + pos.z();
+                            sink = pos.x() + pos.y() + pos.z();
                         });
                     })
                     .build());
@@ -269,8 +272,7 @@ public class LargeScaleSystemBenchmark {
                             .execute((w, q) -> {
                                 q.forEach(Position.class, pos -> {
                                     // Simulate rendering
-                                    double screenX = pos.x() * 10;
-                                    double screenY = pos.y() * 10;
+                                    sink = pos.x() * 10 + pos.y() * 10;
                                 });
                             })
                             .build();
@@ -283,7 +285,7 @@ public class LargeScaleSystemBenchmark {
                             .execute((w, q) -> {
                                 q.forEach(Velocity.class, vel -> {
                                     // Simulate animation speed calculation
-                                    double speed = Math.sqrt(
+                                    sink = Math.sqrt(
                                             vel.dx() * vel.dx() +
                                                     vel.dy() * vel.dy() +
                                                     vel.dz() * vel.dz()
@@ -300,7 +302,7 @@ public class LargeScaleSystemBenchmark {
                             .execute((w, q) -> {
                                 q.forEach(Health.class, health -> {
                                     // Simulate UI update
-                                    double healthPercent = (double) health.current() / health.max() * 100;
+                                    sink = (double) health.current() / health.max() * 100;
                                 });
                             })
                             .build();
