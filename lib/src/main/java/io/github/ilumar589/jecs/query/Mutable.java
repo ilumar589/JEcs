@@ -33,8 +33,8 @@ import java.util.function.Function;
  * @param <T> the component type
  */
 public final class Mutable<T> implements ComponentWrapper<T> {
-    private final ComponentWriter<T> writer;
-    private final int entityIndex;
+    private ComponentWriter<T> writer;
+    private int entityIndex;
     private T cachedValue;
     private boolean valueCached;
 
@@ -49,6 +49,22 @@ public final class Mutable<T> implements ComponentWrapper<T> {
         this.writer = writer;
         this.entityIndex = entityIndex;
         this.valueCached = false;
+    }
+
+    /**
+     * Updates this wrapper to point to a different entity index.
+     * This method is used internally to reuse wrapper instances across entity iterations,
+     * reducing allocation overhead from O(entities × components) to O(components).
+     * Package-private - called by ComponentQuery.
+     *
+     * @param newWriter the component writer (may be from a different archetype)
+     * @param newEntityIndex the new entity index to point to
+     */
+    void reset(ComponentWriter<T> newWriter, int newEntityIndex) {
+        this.writer = newWriter;
+        this.entityIndex = newEntityIndex;
+        this.valueCached = false;
+        this.cachedValue = null;
     }
 
     /**

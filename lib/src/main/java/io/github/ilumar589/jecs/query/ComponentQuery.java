@@ -2,6 +2,7 @@ package io.github.ilumar589.jecs.query;
 
 import io.github.ilumar589.jecs.world.Archetype;
 import io.github.ilumar589.jecs.world.ComponentReader;
+import io.github.ilumar589.jecs.world.ComponentTypeRegistry;
 import io.github.ilumar589.jecs.world.ComponentWriter;
 
 import java.util.*;
@@ -72,6 +73,8 @@ import java.util.function.Predicate;
 public final class ComponentQuery {
 
     private final Collection<Archetype> archetypes;
+    private final QueryCache queryCache;
+    private final ComponentTypeRegistry typeRegistry;
 
     private final Set<Class<?>> includedTypes = new LinkedHashSet<>();
     private final Set<Class<?>> readOnlyTypes = new LinkedHashSet<>();
@@ -83,9 +86,38 @@ public final class ComponentQuery {
      * This constructor is typically called internally by EcsWorld.
      *
      * @param archetypes the collection of archetypes to query
+     * @deprecated Use {@link #ComponentQuery(Collection, QueryCache, ComponentTypeRegistry)} instead
      */
+    @Deprecated
     public ComponentQuery(Collection<Archetype> archetypes) {
+        this(archetypes, null, null);
+    }
+
+    /**
+     * Creates a new ComponentQuery with caching support.
+     * This constructor is typically called internally by EcsWorld.
+     *
+     * @param archetypes the collection of archetypes to query
+     * @param queryCache the cache for storing matching archetype results (may be null for no caching)
+     * @deprecated Use {@link #ComponentQuery(Collection, QueryCache, ComponentTypeRegistry)} instead
+     */
+    @Deprecated
+    public ComponentQuery(Collection<Archetype> archetypes, QueryCache queryCache) {
+        this(archetypes, queryCache, null);
+    }
+
+    /**
+     * Creates a new ComponentQuery with caching and bitset matching support.
+     * This constructor is typically called internally by EcsWorld.
+     *
+     * @param archetypes the collection of archetypes to query
+     * @param queryCache the cache for storing matching archetype results (may be null for no caching)
+     * @param typeRegistry the registry for bitset-based component matching (may be null for set-based matching)
+     */
+    public ComponentQuery(Collection<Archetype> archetypes, QueryCache queryCache, ComponentTypeRegistry typeRegistry) {
         this.archetypes = archetypes;
+        this.queryCache = queryCache;
+        this.typeRegistry = typeRegistry;
     }
 
     // ==================== Builder Methods ====================
@@ -239,6 +271,21 @@ public final class ComponentQuery {
     public void forEach(Consumer<Object[]> consumer, Class<?>... types) {
         Set<Class<?>> typeSet = new LinkedHashSet<>(Arrays.asList(types));
         
+        // Pre-allocate wrapper array once (reused across all entities)
+        Object[] wrappers = new Object[types.length];
+        
+        // Pre-create wrapper instances once (reused by updating their entity index)
+        // This reduces allocations from O(entities × components) to O(components)
+        // Note: Wrappers are created with null accessors but reset() is always called
+        // before the consumer accesses them, so this is safe.
+        for (int i = 0; i < types.length; i++) {
+            if (mutableTypes.contains(types[i])) {
+                wrappers[i] = new Mutable<>(null, 0);
+            } else {
+                wrappers[i] = new ReadOnly<>(null, 0);
+            }
+        }
+        
         for (Archetype archetype : getMatchingArchetypes(typeSet)) {
             // Get readers/writers for each component type
             Object[] accessors = new Object[types.length];
@@ -251,18 +298,17 @@ public final class ComponentQuery {
                 }
             }
             
-            // Iterate entities
+            // Iterate entities - reuse wrapper instances
             int size = archetype.size();
             for (int entityIdx = 0; entityIdx < size; entityIdx++) {
-                // Create wrappers for this entity
-                Object[] wrappers = new Object[types.length];
+                // Reset wrappers to point to current entity (must be called before consumer uses them)
                 for (int i = 0; i < types.length; i++) {
                     if (mutableTypes.contains(types[i])) {
-                        ComponentWriter<?> writer = (ComponentWriter<?>) accessors[i];
-                        wrappers[i] = new Mutable(writer, entityIdx);
+                        Mutable<Object> mutable = (Mutable<Object>) wrappers[i];
+                        mutable.reset((ComponentWriter<Object>) accessors[i], entityIdx);
                     } else {
-                        ComponentReader<?> reader = (ComponentReader<?>) accessors[i];
-                        wrappers[i] = new ReadOnly(reader, entityIdx);
+                        ReadOnly<Object> readOnly = (ReadOnly<Object>) wrappers[i];
+                        readOnly.reset((ComponentReader<Object>) accessors[i], entityIdx);
                     }
                 }
                 
@@ -851,8 +897,80 @@ public final class ComponentQuery {
     /**
      * Returns archetypes that match the inclusion and exclusion criteria,
      * plus the additional required types.
+     * 
+     * <p>Results are cached for improved performance. The cache is automatically
+     * invalidated when new archetypes are created in the EcsWorld.</p>
      */
     private List<Archetype> getMatchingArchetypes(Set<Class<?>> additionalRequired) {
+        // Try to get from cache first
+        if (queryCache != null) {
+            QueryCacheKey key = new QueryCacheKey(includedTypes, excludedTypes, additionalRequired);
+            List<Archetype> cached = queryCache.get(key);
+            if (cached != null) {
+                return cached;
+            }
+            
+            // Not in cache - compute and store
+            List<Archetype> matching = computeMatchingArchetypes(additionalRequired);
+            queryCache.put(key, matching);
+            return matching;
+        }
+        
+        // No cache - compute directly
+        return computeMatchingArchetypes(additionalRequired);
+    }
+    
+    /**
+     * Computes matching archetypes without caching.
+     * Uses bitset-based matching when a type registry is available for O(1) checks,
+     * otherwise falls back to set-based matching.
+     */
+    private List<Archetype> computeMatchingArchetypes(Set<Class<?>> additionalRequired) {
+        // Use bitset matching if registry is available
+        if (typeRegistry != null) {
+            return computeMatchingArchetypesWithBitsets(additionalRequired);
+        }
+        
+        // Fallback to set-based matching
+        return computeMatchingArchetypesWithSets(additionalRequired);
+    }
+    
+    /**
+     * Computes matching archetypes using O(1) bitset operations.
+     */
+    private List<Archetype> computeMatchingArchetypesWithBitsets(Set<Class<?>> additionalRequired) {
+        List<Archetype> matching = new ArrayList<>();
+        
+        // Pre-compute required and excluded bitsets
+        BitSet requiredBits = typeRegistry.toBitSet(includedTypes);
+        BitSet additionalBits = typeRegistry.toBitSet(additionalRequired);
+        requiredBits.or(additionalBits);
+        
+        BitSet excludedBits = typeRegistry.toBitSet(excludedTypes);
+        
+        for (Archetype archetype : archetypes) {
+            BitSet archetypeBits = typeRegistry.toBitSet(archetype.getComponentTypes());
+            
+            // O(1) inclusion check: (archetypeBits & requiredBits) == requiredBits
+            if (!ComponentTypeRegistry.containsAll(archetypeBits, requiredBits)) {
+                continue;
+            }
+            
+            // O(1) exclusion check: (archetypeBits & excludedBits) == 0
+            if (ComponentTypeRegistry.intersects(archetypeBits, excludedBits)) {
+                continue;
+            }
+            
+            matching.add(archetype);
+        }
+        
+        return matching;
+    }
+    
+    /**
+     * Computes matching archetypes using set operations (fallback).
+     */
+    private List<Archetype> computeMatchingArchetypesWithSets(Set<Class<?>> additionalRequired) {
         List<Archetype> matching = new ArrayList<>();
 
         for (Archetype archetype : archetypes) {

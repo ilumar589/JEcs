@@ -2,6 +2,7 @@ package io.github.ilumar589.jecs.world;
 
 import io.github.ilumar589.jecs.entity.Entity;
 import io.github.ilumar589.jecs.query.ComponentQuery;
+import io.github.ilumar589.jecs.query.QueryCache;
 import org.jspecify.annotations.Nullable;
 
 import java.util.*;
@@ -11,6 +12,11 @@ import java.util.function.Supplier;
 /**
  * The main entry point for the ECS framework.
  * Manages entities, components, and archetypes.
+ * 
+ * <h2>Query Caching</h2>
+ * Query results are cached for improved performance. The cache is automatically
+ * invalidated when new archetypes are created (which happens when entities with
+ * new component combinations are added to the world).
  * 
  * <h2>Project Valhalla Readiness</h2>
  * This ECS implementation is designed to be fully compatible with Project Valhalla:
@@ -37,6 +43,8 @@ public final class EcsWorld {
     private int nextEntityId = 0;
     private final Map<Entity, Archetype> entityToArchetype;
     private final Map<ArchetypeKey, Archetype> archetypes;
+    private final QueryCache queryCache;
+    private final ComponentTypeRegistry componentTypeRegistry;
 
     /**
      * Creates a new empty ECS world.
@@ -44,6 +52,8 @@ public final class EcsWorld {
     public EcsWorld() {
         this.entityToArchetype = new HashMap<>();
         this.archetypes = new HashMap<>();
+        this.queryCache = new QueryCache();
+        this.componentTypeRegistry = new ComponentTypeRegistry();
     }
 
     /**
@@ -347,7 +357,7 @@ public final class EcsWorld {
      * @return a new ComponentQuery builder
      */
     public ComponentQuery componentQuery() {
-        return new ComponentQuery(archetypes.values());
+        return new ComponentQuery(archetypes.values(), queryCache, componentTypeRegistry);
     }
 
     /**
@@ -369,8 +379,22 @@ public final class EcsWorld {
     }
 
     private Archetype getOrCreateArchetype(Set<Class<?>> types) {
+        // Register all component types in the registry
+        for (Class<?> type : types) {
+            componentTypeRegistry.getBitIndex(type);
+        }
+        
         final var key = new ArchetypeKey(types);
-        return archetypes.computeIfAbsent(key, k -> new Archetype(types));
+        Archetype existing = archetypes.get(key);
+        if (existing != null) {
+            return existing;
+        }
+        
+        // New archetype - invalidate query cache since new archetypes may match existing queries
+        Archetype newArchetype = new Archetype(types);
+        archetypes.put(key, newArchetype);
+        queryCache.invalidate();
+        return newArchetype;
     }
 
     /**
