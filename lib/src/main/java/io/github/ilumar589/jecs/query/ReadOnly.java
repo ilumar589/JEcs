@@ -32,8 +32,8 @@ import java.util.function.Function;
  * @param <T> the component type
  */
 public final class ReadOnly<T> implements ComponentWrapper<T> {
-    private final ComponentReader<T> reader;
-    private final int entityIndex;
+    private ComponentReader<T> reader;
+    private int entityIndex;
     private T cachedValue;
     private boolean valueCached;
 
@@ -48,6 +48,22 @@ public final class ReadOnly<T> implements ComponentWrapper<T> {
         this.reader = reader;
         this.entityIndex = entityIndex;
         this.valueCached = false;
+    }
+
+    /**
+     * Updates this wrapper to point to a different entity index.
+     * This method is used internally to reuse wrapper instances across entity iterations,
+     * reducing allocation overhead from O(entities × components) to O(components).
+     * Package-private - called by ComponentQuery.
+     *
+     * @param newReader the component reader (may be from a different archetype)
+     * @param newEntityIndex the new entity index to point to
+     */
+    void reset(ComponentReader<T> newReader, int newEntityIndex) {
+        this.reader = newReader;
+        this.entityIndex = newEntityIndex;
+        this.valueCached = false;
+        this.cachedValue = null;
     }
 
     /**
