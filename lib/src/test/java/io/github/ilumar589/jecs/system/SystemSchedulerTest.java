@@ -3,6 +3,8 @@ package io.github.ilumar589.jecs.system;
 import io.github.ilumar589.jecs.component.Health;
 import io.github.ilumar589.jecs.component.Position;
 import io.github.ilumar589.jecs.component.Velocity;
+import io.github.ilumar589.jecs.query.Mutable;
+import io.github.ilumar589.jecs.query.ReadOnly;
 import io.github.ilumar589.jecs.world.EcsWorld;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -221,13 +223,17 @@ class SystemSchedulerTest {
                 .withReadOnly(Velocity.class)
                 .execute((w, q) -> {
                     executionOrder.add("Physics");
-                    q.forEachWithAccess(Position.class, Velocity.class, (pos, vel) -> {
+                    q.forEach(wrappers -> {
+                        @SuppressWarnings("unchecked")
+                        Mutable<Position> pos = (Mutable<Position>) wrappers[0];
+                        @SuppressWarnings("unchecked")
+                        ReadOnly<Velocity> vel = (ReadOnly<Velocity>) wrappers[1];
                         pos.set(new Position(
                                 pos.get().x() + vel.get().dx(),
                                 pos.get().y() + vel.get().dy(),
                                 pos.get().z() + vel.get().dz()
                         ));
-                    });
+                    }, Position.class, Velocity.class);
                 })
                 .build();
 
@@ -516,13 +522,17 @@ class SystemSchedulerTest {
                 .withMutable(Position.class)
                 .withReadOnly(Velocity.class)
                 .execute((w, q) -> {
-                    q.forEachWithAccess(Position.class, Velocity.class, (pos, vel) -> {
+                    q.forEach(wrappers -> {
+                        @SuppressWarnings("unchecked")
+                        Mutable<Position> pos = (Mutable<Position>) wrappers[0];
+                        @SuppressWarnings("unchecked")
+                        ReadOnly<Velocity> vel = (ReadOnly<Velocity>) wrappers[1];
                         pos.set(new Position(
                                 pos.get().x() + vel.get().dx(),
                                 pos.get().y() + vel.get().dy(),
                                 pos.get().z() + vel.get().dz()
                         ));
-                    });
+                    }, Position.class, Velocity.class);
                 })
                 .build();
 
@@ -530,12 +540,14 @@ class SystemSchedulerTest {
         System health = new System.Builder("Health")
                 .withMutable(Health.class)
                 .execute((w, q) -> {
-                    q.forEachMutable(Health.class, h -> {
+                    q.forEach(wrappers -> {
+                        @SuppressWarnings("unchecked")
+                        Mutable<Health> h = (Mutable<Health>) wrappers[0];
                         // Regenerate 1 health per tick
                         if (h.get().current() < h.get().max()) {
                             h.set(new Health(h.get().current() + 1, h.get().max()));
                         }
-                    });
+                    }, Health.class);
                 })
                 .build();
 

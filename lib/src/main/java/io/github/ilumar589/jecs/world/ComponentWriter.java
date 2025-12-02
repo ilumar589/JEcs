@@ -7,6 +7,7 @@ package io.github.ilumar589.jecs.world;
  * <h2>Memory Semantics</h2>
  * <ul>
  *   <li>Write operations use release semantics</li>
+ *   <li>Read operations reconstruct components from primitive arrays</li>
  *   <li>Ensures visibility of writes to other threads that perform acquire reads</li>
  *   <li>Suitable for safe publication in concurrent ECS systems</li>
  * </ul>
@@ -18,7 +19,7 @@ package io.github.ilumar589.jecs.world;
  * 
  * for (int i = 0; i < archetype.size(); i++) {
  *     Velocity vel = velReader.read(i);
- *     Position pos = archetype.getReader(Position.class).read(i);
+ *     Position pos = posWriter.read(i);  // Can also read via writer
  *     posWriter.write(i, new Position(
  *         pos.x() + vel.dx() * dt,
  *         pos.y() + vel.dy() * dt,
@@ -35,6 +36,10 @@ package io.github.ilumar589.jecs.world;
  *   <li>Sequential memory access patterns</li>
  *   <li>No object allocation for primitive fields</li>
  * </ul>
+ * 
+ * <h2>Valhalla Readiness</h2>
+ * This interface is designed to work with Project Valhalla value types.
+ * Component types can be records that become value classes with zero code changes.
  *
  * @param <T> the component type
  */
@@ -50,6 +55,17 @@ public interface ComponentWriter<T> {
      * @throws IndexOutOfBoundsException if index is out of bounds
      */
     void write(int entityIndex, T component);
+    
+    /**
+     * Reads a component at the specified entity index.
+     * The component is reconstructed from its primitive fields in the typed arrays.
+     * This is needed for Mutable wrappers to support get() operations.
+     *
+     * @param entityIndex the index of the entity
+     * @return the reconstructed component
+     * @throws IndexOutOfBoundsException if index is out of bounds
+     */
+    T read(int entityIndex);
     
     /**
      * Returns the number of entities in this writer's archetype.

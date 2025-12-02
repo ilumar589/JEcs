@@ -1,7 +1,8 @@
 package io.github.ilumar589.jecs.query;
 
-import io.github.ilumar589.jecs.entity.Entity;
 import io.github.ilumar589.jecs.world.Archetype;
+import io.github.ilumar589.jecs.world.ComponentReader;
+import io.github.ilumar589.jecs.world.ComponentWriter;
 
 import java.util.*;
 import java.util.function.BiConsumer;
@@ -16,27 +17,27 @@ import java.util.function.Predicate;
  *
  * <h2>Usage Examples</h2>
  * <pre>{@code
- * // Query with one component
+ * // Query with one component using generic forEach
  * world.componentQuery()
- *     .with(Position.class)
- *     .forEach(Position.class, pos -> {
- *         System.out.println("Pos: " + pos);
- *     });
+ *     .withMutable(Position.class)
+ *     .forEach(wrappers -> {
+ *         Mutable<Position> pos = (Mutable<Position>) wrappers[0];
+ *         pos.update(p -> new Position(p.x() + 10, p.y(), p.z()));
+ *     }, Position.class);
  *
- * // Query with two components
+ * // Query with multiple mutable and read-only components
  * world.componentQuery()
- *     .with(Position.class, Velocity.class)
- *     .forEach(Position.class, Velocity.class, (pos, vel) -> {
- *         System.out.println("Pos: " + pos + ", Vel: " + vel);
- *     });
- *
- * // Query with exclusion
- * world.componentQuery()
- *     .with(Position.class, Health.class)
- *     .without(Dead.class)
- *     .forEach(Position.class, Health.class, (pos, health) -> {
- *         // Process only living entities
- *     });
+ *     .withMutable(Position.class, Health.class)
+ *     .withReadOnly(Velocity.class, Gravity.class)
+ *     .forEach(wrappers -> {
+ *         Mutable<Position> pos = (Mutable<Position>) wrappers[0];
+ *         Mutable<Health> health = (Mutable<Health>) wrappers[1];
+ *         ReadOnly<Velocity> vel = (ReadOnly<Velocity>) wrappers[2];
+ *         ReadOnly<Gravity> grav = (ReadOnly<Gravity>) wrappers[3];
+ *         
+ *         pos.update(p -> applyPhysics(p, vel.get(), grav.get()));
+ *         // vel.set(...) would throw UnsupportedOperationException
+ *     }, Position.class, Health.class, Velocity.class, Gravity.class);
  *
  * // Count matching entities
  * int count = world.componentQuery()
@@ -48,11 +49,14 @@ import java.util.function.Predicate;
  * <h2>Thread Safety</h2>
  * ComponentQuery instances are not thread-safe. Each thread should create
  * its own query instance via {@code world.componentQuery()}.
+ * 
+ * <h2>Valhalla Readiness</h2>
+ * This API is designed to be compatible with Project Valhalla.
+ * Component wrappers can become value classes with zero code changes.
  */
 public final class ComponentQuery {
 
     private final Collection<Archetype> archetypes;
-    private final QueryExecutor queryExecutor;
 
     private final Set<Class<?>> includedTypes = new LinkedHashSet<>();
     private final Set<Class<?>> readOnlyTypes = new LinkedHashSet<>();
@@ -64,12 +68,9 @@ public final class ComponentQuery {
      * This constructor is typically called internally by EcsWorld.
      *
      * @param archetypes the collection of archetypes to query
-     * @param queryExecutor the executor for setting components
      */
-    public ComponentQuery(Collection<Archetype> archetypes,
-                          QueryExecutor queryExecutor) {
+    public ComponentQuery(Collection<Archetype> archetypes) {
         this.archetypes = archetypes;
-        this.queryExecutor = queryExecutor;
     }
 
     // ==================== Builder Methods ====================
@@ -93,15 +94,19 @@ public final class ComponentQuery {
     /**
      * Specifies component types that entities must have, with read-only access.
      * These components will not be modified during query iteration.
+     * Attempting to modify a read-only component via {@link ReadOnly#set} or 
+     * {@link ReadOnly#update} will throw {@link UnsupportedOperationException}.
      * 
      * <h2>Usage Example</h2>
      * <pre>{@code
      * world.componentQuery()
-     *     .withReadOnly(Position.class)
-     *     .withMutable(Velocity.class)
-     *     .forEach(Position.class, Velocity.class, (pos, vel) -> {
-     *         // pos is read-only, vel can be modified
-     *     });
+     *     .withReadOnly(Velocity.class)
+     *     .withMutable(Position.class)
+     *     .forEach(wrappers -> {
+     *         Mutable<Position> pos = (Mutable<Position>) wrappers[0];
+     *         ReadOnly<Velocity> vel = (ReadOnly<Velocity>) wrappers[1];
+     *         // pos can be modified, vel cannot
+     *     }, Position.class, Velocity.class);
      * }</pre>
      *
      * @param types the required read-only component types
@@ -119,15 +124,17 @@ public final class ComponentQuery {
     /**
      * Specifies component types that entities must have, with mutable access.
      * These components may be modified during query iteration.
+     * Writes via {@link Mutable#set} or {@link Mutable#update} are applied
+     * immediately to the primitive arrays.
      * 
      * <h2>Usage Example</h2>
      * <pre>{@code
      * world.componentQuery()
-     *     .withReadOnly(Velocity.class)
      *     .withMutable(Position.class)
-     *     .forEach(Position.class, Velocity.class, (pos, vel) -> {
-     *         // Position can be modified based on Velocity
-     *     });
+     *     .forEach(wrappers -> {
+     *         Mutable<Position> pos = (Mutable<Position>) wrappers[0];
+     *         pos.update(p -> new Position(p.x() + 10, p.y(), p.z()));
+     *     }, Position.class);
      * }</pre>
      *
      * @param types the required mutable component types
@@ -179,16 +186,96 @@ public final class ComponentQuery {
     // ==================== Terminal Operations ====================
 
     /**
+     * Generic forEach that handles any number of components with automatic wrapper selection.
+     * Components are wrapped as {@link Mutable} or {@link ReadOnly} based on 
+     * {@link #withMutable} / {@link #withReadOnly} declarations.
+     * 
+     * <h2>Usage Example</h2>
+     * <pre>{@code
+     * world.componentQuery()
+     *     .withMutable(Position.class, Health.class)
+     *     .withReadOnly(Velocity.class, Gravity.class, Weight.class)
+     *     .forEach(wrappers -> {
+     *         Mutable<Position> pos = (Mutable<Position>) wrappers[0];
+     *         Mutable<Health> health = (Mutable<Health>) wrappers[1];
+     *         ReadOnly<Velocity> vel = (ReadOnly<Velocity>) wrappers[2];
+     *         ReadOnly<Gravity> grav = (ReadOnly<Gravity>) wrappers[3];
+     *         ReadOnly<Weight> weight = (ReadOnly<Weight>) wrappers[4];
+     *         
+     *         // Use components...
+     *         pos.update(p -> applyPhysics(p, vel.get(), grav.get()));
+     *         
+     *         // Trying this throws exception:
+     *         // vel.set(...);  // UnsupportedOperationException!
+     *     }, Position.class, Health.class, Velocity.class, Gravity.class, Weight.class);
+     * }</pre>
+     * 
+     * <h2>Direct Primitive Access</h2>
+     * {@link Mutable} wrappers write directly to primitive arrays - no staging or 
+     * write-back is needed. Changes are visible immediately.
+     * 
+     * <h2>Valhalla Readiness</h2>
+     * When Project Valhalla lands, wrappers can become value classes for better performance.
+     *
+     * @param consumer the consumer that receives an array of component wrappers
+     * @param types the component types in the order they should appear in the wrapper array
+     */
+    @SuppressWarnings("unchecked")
+    public void forEach(Consumer<Object[]> consumer, Class<?>... types) {
+        Set<Class<?>> typeSet = new LinkedHashSet<>(Arrays.asList(types));
+        
+        for (Archetype archetype : getMatchingArchetypes(typeSet)) {
+            // Get readers/writers for each component type
+            Object[] accessors = new Object[types.length];
+            for (int i = 0; i < types.length; i++) {
+                Class<?> type = types[i];
+                if (mutableTypes.contains(type)) {
+                    accessors[i] = archetype.getWriter(type);
+                } else {
+                    accessors[i] = archetype.getReader(type);
+                }
+            }
+            
+            // Iterate entities
+            int size = archetype.size();
+            for (int entityIdx = 0; entityIdx < size; entityIdx++) {
+                // Create wrappers for this entity
+                Object[] wrappers = new Object[types.length];
+                for (int i = 0; i < types.length; i++) {
+                    if (mutableTypes.contains(types[i])) {
+                        ComponentWriter<?> writer = (ComponentWriter<?>) accessors[i];
+                        wrappers[i] = new Mutable(writer, entityIdx);
+                    } else {
+                        ComponentReader<?> reader = (ComponentReader<?>) accessors[i];
+                        wrappers[i] = new ReadOnly(reader, entityIdx);
+                    }
+                }
+                
+                // Execute consumer - no write-back needed, Mutable writes directly
+                consumer.accept(wrappers);
+            }
+        }
+    }
+
+    // ==================== Type-Safe Helper Methods ====================
+    
+    /**
      * Iterates over all matching entities, providing a single component.
+     * This is a type-safe helper that unwraps the component value.
      *
      * @param typeA the class of the component type
      * @param consumer the consumer for the component
      * @param <A> the component type
      */
     public <A> void forEach(Class<A> typeA, Consumer<A> consumer) {
-        for (Archetype archetype : getMatchingArchetypes(Set.of(typeA))) {
-            for (Entity entity : archetype.getEntities()) {
-                A a = archetype.getComponent(entity, typeA);
+        Set<Class<?>> typeSet = Set.of(typeA);
+        
+        for (Archetype archetype : getMatchingArchetypes(typeSet)) {
+            ComponentReader<A> reader = archetype.getReader(typeA);
+            int size = archetype.size();
+            
+            for (int i = 0; i < size; i++) {
+                A a = reader.read(i);
                 consumer.accept(a);
             }
         }
@@ -196,6 +283,7 @@ public final class ComponentQuery {
 
     /**
      * Iterates over all matching entities, providing two components.
+     * This is a type-safe helper that unwraps the component values.
      *
      * @param typeA the class of the first component type
      * @param typeB the class of the second component type
@@ -204,10 +292,16 @@ public final class ComponentQuery {
      * @param <B> the second component type
      */
     public <A, B> void forEach(Class<A> typeA, Class<B> typeB, BiConsumer<A, B> consumer) {
-        for (Archetype archetype : getMatchingArchetypes(Set.of(typeA, typeB))) {
-            for (Entity entity : archetype.getEntities()) {
-                A a = archetype.getComponent(entity, typeA);
-                B b = archetype.getComponent(entity, typeB);
+        Set<Class<?>> typeSet = Set.of(typeA, typeB);
+        
+        for (Archetype archetype : getMatchingArchetypes(typeSet)) {
+            ComponentReader<A> readerA = archetype.getReader(typeA);
+            ComponentReader<B> readerB = archetype.getReader(typeB);
+            int size = archetype.size();
+            
+            for (int i = 0; i < size; i++) {
+                A a = readerA.read(i);
+                B b = readerB.read(i);
                 consumer.accept(a, b);
             }
         }
@@ -215,6 +309,7 @@ public final class ComponentQuery {
 
     /**
      * Iterates over all matching entities, providing three components.
+     * This is a type-safe helper that unwraps the component values.
      *
      * @param typeA the class of the first component type
      * @param typeB the class of the second component type
@@ -226,11 +321,18 @@ public final class ComponentQuery {
      */
     public <A, B, C> void forEach(Class<A> typeA, Class<B> typeB, Class<C> typeC, 
                                    TriConsumer<A, B, C> consumer) {
-        for (Archetype archetype : getMatchingArchetypes(Set.of(typeA, typeB, typeC))) {
-            for (Entity entity : archetype.getEntities()) {
-                A a = archetype.getComponent(entity, typeA);
-                B b = archetype.getComponent(entity, typeB);
-                C c = archetype.getComponent(entity, typeC);
+        Set<Class<?>> typeSet = Set.of(typeA, typeB, typeC);
+        
+        for (Archetype archetype : getMatchingArchetypes(typeSet)) {
+            ComponentReader<A> readerA = archetype.getReader(typeA);
+            ComponentReader<B> readerB = archetype.getReader(typeB);
+            ComponentReader<C> readerC = archetype.getReader(typeC);
+            int size = archetype.size();
+            
+            for (int i = 0; i < size; i++) {
+                A a = readerA.read(i);
+                B b = readerB.read(i);
+                C c = readerC.read(i);
                 consumer.accept(a, b, c);
             }
         }
@@ -238,6 +340,7 @@ public final class ComponentQuery {
 
     /**
      * Iterates over all matching entities, providing four components.
+     * This is a type-safe helper that unwraps the component values.
      *
      * @param typeA the class of the first component type
      * @param typeB the class of the second component type
@@ -251,114 +354,76 @@ public final class ComponentQuery {
      */
     public <A, B, C, D> void forEach(Class<A> typeA, Class<B> typeB, Class<C> typeC, 
                                       Class<D> typeD, QuadConsumer<A, B, C, D> consumer) {
-        for (Archetype archetype : getMatchingArchetypes(Set.of(typeA, typeB, typeC, typeD))) {
-            for (Entity entity : archetype.getEntities()) {
-                A a = archetype.getComponent(entity, typeA);
-                B b = archetype.getComponent(entity, typeB);
-                C c = archetype.getComponent(entity, typeC);
-                D d = archetype.getComponent(entity, typeD);
+        Set<Class<?>> typeSet = Set.of(typeA, typeB, typeC, typeD);
+        
+        for (Archetype archetype : getMatchingArchetypes(typeSet)) {
+            ComponentReader<A> readerA = archetype.getReader(typeA);
+            ComponentReader<B> readerB = archetype.getReader(typeB);
+            ComponentReader<C> readerC = archetype.getReader(typeC);
+            ComponentReader<D> readerD = archetype.getReader(typeD);
+            int size = archetype.size();
+            
+            for (int i = 0; i < size; i++) {
+                A a = readerA.read(i);
+                B b = readerB.read(i);
+                C c = readerC.read(i);
+                D d = readerD.read(i);
                 consumer.accept(a, b, c, d);
             }
         }
     }
 
-    // ==================== Access-Controlled Terminal Operations ====================
-
     /**
-     * Iterates over matching entities with one mutable component.
-     * Changes made via {@link Mutable#set} or {@link Mutable#update} are automatically saved.
+     * Modifies the first component of matching entities using the provided function.
+     * Uses the generic forEach internally with mutable access.
      *
-     * <h2>Usage Example</h2>
-     * <pre>{@code
-     * world.componentQuery()
-     *     .withMutable(Position.class)
-     *     .forEachMutable(Position.class, pos -> {
-     *         pos.update(p -> new Position(p.x() + 1, p.y(), p.z()));
-     *     });
-     * }</pre>
-     *
-     * @param typeA the class of the mutable component type
-     * @param consumer the consumer that receives a Mutable wrapper
+     * @param typeA the class of the component type to modify
+     * @param modifier the function to transform the component
      * @param <A> the component type
      */
-    public <A> void forEachMutable(Class<A> typeA, Consumer<Mutable<A>> consumer) {
-        for (Archetype archetype : getMatchingArchetypes(Set.of(typeA))) {
-            for (Entity entity : archetype.getEntities()) {
-                A a = archetype.getComponent(entity, typeA);
-                Mutable<A> mutableA = new Mutable<>(a);
-                consumer.accept(mutableA);
-                if (mutableA.isModified()) {
-                    queryExecutor.setComponent(entity, mutableA.get());
-                }
-            }
-        }
+    @SuppressWarnings("unchecked")
+    public <A> void modify(Class<A> typeA, Function<A, A> modifier) {
+        // Temporarily mark as mutable for the operation
+        mutableTypes.add(typeA);
+        includedTypes.add(typeA);
+        
+        forEach(wrappers -> {
+            Mutable<A> mutableA = (Mutable<A>) wrappers[0];
+            A current = mutableA.get();
+            A newValue = modifier.apply(current);
+            mutableA.set(newValue);
+        }, typeA);
+        
+        // Remove the temporary mutable marking
+        mutableTypes.remove(typeA);
     }
 
     /**
-     * Iterates over matching entities with one read-only and one mutable component.
-     * Changes made via the Mutable wrapper are automatically saved.
+     * Conditionally modifies the first component of matching entities.
+     * Uses the generic forEach internally with mutable access.
      *
-     * <h2>Usage Example</h2>
-     * <pre>{@code
-     * world.componentQuery()
-     *     .withReadOnly(Velocity.class)
-     *     .withMutable(Position.class)
-     *     .forEachWithAccess(Position.class, Velocity.class, (pos, vel) -> {
-     *         pos.update(p -> new Position(
-     *             p.x() + vel.get().dx(),
-     *             p.y() + vel.get().dy(),
-     *             p.z() + vel.get().dz()
-     *         ));
-     *     });
-     * }</pre>
-     *
-     * @param mutableType the class of the mutable component type
-     * @param readOnlyType the class of the read-only component type
-     * @param consumer the consumer that receives Mutable and ReadOnly wrappers
-     * @param <A> the mutable component type
-     * @param <B> the read-only component type
+     * @param typeA the class of the component type to modify
+     * @param predicate the condition to check before modifying
+     * @param modifier the function to transform the component
+     * @param <A> the component type
      */
-    public <A, B> void forEachWithAccess(Class<A> mutableType, Class<B> readOnlyType,
-                                          BiConsumer<Mutable<A>, ReadOnly<B>> consumer) {
-        for (Archetype archetype : getMatchingArchetypes(Set.of(mutableType, readOnlyType))) {
-            for (Entity entity : archetype.getEntities()) {
-                A a = archetype.getComponent(entity, mutableType);
-                B b = archetype.getComponent(entity, readOnlyType);
-                Mutable<A> mutableA = new Mutable<>(a);
-                ReadOnly<B> readOnlyB = new ReadOnly<>(b);
-                consumer.accept(mutableA, readOnlyB);
-                if (mutableA.isModified()) {
-                    queryExecutor.setComponent(entity, mutableA.get());
-                }
+    @SuppressWarnings("unchecked")
+    public <A> void modifyIf(Class<A> typeA, Predicate<A> predicate, Function<A, A> modifier) {
+        // Temporarily mark as mutable for the operation
+        mutableTypes.add(typeA);
+        includedTypes.add(typeA);
+        
+        forEach(wrappers -> {
+            Mutable<A> mutableA = (Mutable<A>) wrappers[0];
+            A current = mutableA.get();
+            if (predicate.test(current)) {
+                A newValue = modifier.apply(current);
+                mutableA.set(newValue);
             }
-        }
-    }
-
-    /**
-     * Iterates over matching entities with two read-only and one mutable component.
-     *
-     * @param mutableType the class of the mutable component type
-     * @param readOnly1 the class of the first read-only component type
-     * @param readOnly2 the class of the second read-only component type
-     * @param consumer the consumer that receives wrappers
-     * @param <A> the mutable component type
-     * @param <B> the first read-only component type
-     * @param <C> the second read-only component type
-     */
-    public <A, B, C> void forEachWithAccess(Class<A> mutableType, Class<B> readOnly1, Class<C> readOnly2,
-                                             TriConsumer<Mutable<A>, ReadOnly<B>, ReadOnly<C>> consumer) {
-        for (Archetype archetype : getMatchingArchetypes(Set.of(mutableType, readOnly1, readOnly2))) {
-            for (Entity entity : archetype.getEntities()) {
-                A a = archetype.getComponent(entity, mutableType);
-                B b = archetype.getComponent(entity, readOnly1);
-                C c = archetype.getComponent(entity, readOnly2);
-                Mutable<A> mutableA = new Mutable<>(a);
-                consumer.accept(mutableA, new ReadOnly<>(b), new ReadOnly<>(c));
-                if (mutableA.isModified()) {
-                    queryExecutor.setComponent(entity, mutableA.get());
-                }
-            }
-        }
+        }, typeA);
+        
+        // Remove the temporary mutable marking
+        mutableTypes.remove(typeA);
     }
 
     // ==================== Results Operations ====================
@@ -374,10 +439,16 @@ public final class ComponentQuery {
      */
     public <A, B> List<ComponentTuple2<A, B>> results2(Class<A> typeA, Class<B> typeB) {
         List<ComponentTuple2<A, B>> results = new ArrayList<>();
-        for (Archetype archetype : getMatchingArchetypes(Set.of(typeA, typeB))) {
-            for (Entity entity : archetype.getEntities()) {
-                A a = archetype.getComponent(entity, typeA);
-                B b = archetype.getComponent(entity, typeB);
+        Set<Class<?>> typeSet = Set.of(typeA, typeB);
+        
+        for (Archetype archetype : getMatchingArchetypes(typeSet)) {
+            ComponentReader<A> readerA = archetype.getReader(typeA);
+            ComponentReader<B> readerB = archetype.getReader(typeB);
+            int size = archetype.size();
+            
+            for (int i = 0; i < size; i++) {
+                A a = readerA.read(i);
+                B b = readerB.read(i);
                 results.add(new ComponentTuple2<>(a, b));
             }
         }
@@ -398,11 +469,18 @@ public final class ComponentQuery {
     public <A, B, C> List<ComponentTuple3<A, B, C>> results3(Class<A> typeA, Class<B> typeB, 
                                                               Class<C> typeC) {
         List<ComponentTuple3<A, B, C>> results = new ArrayList<>();
-        for (Archetype archetype : getMatchingArchetypes(Set.of(typeA, typeB, typeC))) {
-            for (Entity entity : archetype.getEntities()) {
-                A a = archetype.getComponent(entity, typeA);
-                B b = archetype.getComponent(entity, typeB);
-                C c = archetype.getComponent(entity, typeC);
+        Set<Class<?>> typeSet = Set.of(typeA, typeB, typeC);
+        
+        for (Archetype archetype : getMatchingArchetypes(typeSet)) {
+            ComponentReader<A> readerA = archetype.getReader(typeA);
+            ComponentReader<B> readerB = archetype.getReader(typeB);
+            ComponentReader<C> readerC = archetype.getReader(typeC);
+            int size = archetype.size();
+            
+            for (int i = 0; i < size; i++) {
+                A a = readerA.read(i);
+                B b = readerB.read(i);
+                C c = readerC.read(i);
                 results.add(new ComponentTuple3<>(a, b, c));
             }
         }
@@ -425,12 +503,20 @@ public final class ComponentQuery {
     public <A, B, C, D> List<ComponentTuple4<A, B, C, D>> results4(Class<A> typeA, Class<B> typeB, 
                                                                     Class<C> typeC, Class<D> typeD) {
         List<ComponentTuple4<A, B, C, D>> results = new ArrayList<>();
-        for (Archetype archetype : getMatchingArchetypes(Set.of(typeA, typeB, typeC, typeD))) {
-            for (Entity entity : archetype.getEntities()) {
-                A a = archetype.getComponent(entity, typeA);
-                B b = archetype.getComponent(entity, typeB);
-                C c = archetype.getComponent(entity, typeC);
-                D d = archetype.getComponent(entity, typeD);
+        Set<Class<?>> typeSet = Set.of(typeA, typeB, typeC, typeD);
+        
+        for (Archetype archetype : getMatchingArchetypes(typeSet)) {
+            ComponentReader<A> readerA = archetype.getReader(typeA);
+            ComponentReader<B> readerB = archetype.getReader(typeB);
+            ComponentReader<C> readerC = archetype.getReader(typeC);
+            ComponentReader<D> readerD = archetype.getReader(typeD);
+            int size = archetype.size();
+            
+            for (int i = 0; i < size; i++) {
+                A a = readerA.read(i);
+                B b = readerB.read(i);
+                C c = readerC.read(i);
+                D d = readerD.read(i);
                 results.add(new ComponentTuple4<>(a, b, c, d));
             }
         }
@@ -462,43 +548,6 @@ public final class ComponentQuery {
             }
         }
         return false;
-    }
-
-    /**
-     * Modifies the first component of matching entities using the provided function.
-     *
-     * @param typeA the class of the component type to modify
-     * @param modifier the function to transform the component
-     * @param <A> the component type
-     */
-    public <A> void modify(Class<A> typeA, Function<A, A> modifier) {
-        for (Archetype archetype : getMatchingArchetypes(Set.of(typeA))) {
-            for (Entity entity : archetype.getEntities()) {
-                A a = archetype.getComponent(entity, typeA);
-                A newA = modifier.apply(a);
-                queryExecutor.setComponent(entity, newA);
-            }
-        }
-    }
-
-    /**
-     * Conditionally modifies the first component of matching entities.
-     *
-     * @param typeA the class of the component type to modify
-     * @param predicate the condition to check before modifying
-     * @param modifier the function to transform the component
-     * @param <A> the component type
-     */
-    public <A> void modifyIf(Class<A> typeA, Predicate<A> predicate, Function<A, A> modifier) {
-        for (Archetype archetype : getMatchingArchetypes(Set.of(typeA))) {
-            for (Entity entity : archetype.getEntities()) {
-                A a = archetype.getComponent(entity, typeA);
-                if (predicate.test(a)) {
-                    A newA = modifier.apply(a);
-                    queryExecutor.setComponent(entity, newA);
-                }
-            }
-        }
     }
 
     // ==================== Helper Methods ====================
@@ -546,20 +595,5 @@ public final class ComponentQuery {
         }
 
         return matching;
-    }
-
-    /**
-     * Functional interface for setting components on entities.
-     * Used internally to delegate component modification back to EcsWorld.
-     */
-    @FunctionalInterface
-    public interface QueryExecutor {
-        /**
-         * Sets a component on the specified entity.
-         *
-         * @param entity the entity
-         * @param component the new component value
-         */
-        void setComponent(Entity entity, Object component);
     }
 }

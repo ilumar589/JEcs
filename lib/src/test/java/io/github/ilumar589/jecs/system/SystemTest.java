@@ -4,6 +4,8 @@ import io.github.ilumar589.jecs.component.Dead;
 import io.github.ilumar589.jecs.component.Health;
 import io.github.ilumar589.jecs.component.Position;
 import io.github.ilumar589.jecs.component.Velocity;
+import io.github.ilumar589.jecs.query.Mutable;
+import io.github.ilumar589.jecs.query.ReadOnly;
 import io.github.ilumar589.jecs.world.EcsWorld;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -132,7 +134,11 @@ class SystemTest {
                 .withMutable(Position.class)
                 .withReadOnly(Velocity.class)
                 .execute((w, q) -> {
-                    q.forEachWithAccess(Position.class, Velocity.class, (pos, vel) -> {
+                    q.forEach(wrappers -> {
+                        @SuppressWarnings("unchecked")
+                        Mutable<Position> pos = (Mutable<Position>) wrappers[0];
+                        @SuppressWarnings("unchecked")
+                        ReadOnly<Velocity> vel = (ReadOnly<Velocity>) wrappers[1];
                         Position current = pos.get();
                         Velocity velocity = vel.get();
                         pos.set(new Position(
@@ -140,7 +146,7 @@ class SystemTest {
                                 current.y() + velocity.dy(),
                                 current.z() + velocity.dz()
                         ));
-                    });
+                    }, Position.class, Velocity.class);
                 })
                 .build();
 
