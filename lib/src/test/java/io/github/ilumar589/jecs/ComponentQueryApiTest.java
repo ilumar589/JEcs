@@ -1076,4 +1076,295 @@ class ComponentQueryApiTest {
                 assertTrue(exception.getMessage().contains("withMutable"));
             }, Position.class);
     }
+
+    // ==================== Type-Safe forEachWrapper Tests ====================
+
+    @Test
+    void typeSafeForEachWrapperWith1Component() {
+        world.spawn(new Position(1, 2, 3));
+        world.spawn(new Position(10, 20, 30));
+
+        AtomicInteger count = new AtomicInteger(0);
+        List<Float> xValues = new ArrayList<>();
+
+        world.componentQuery()
+            .withMutable(Position.class)
+            .forEachWrapper(Position.class, pos -> {
+                // No manual cast needed - pos is already ComponentWrapper<Position>
+                xValues.add(pos.get().x());
+                // Can cast to Mutable since declared with withMutable
+                Mutable<Position> mutablePos = (Mutable<Position>) pos;
+                mutablePos.update(p -> new Position(p.x() + 100, p.y(), p.z()));
+                count.incrementAndGet();
+            });
+
+        assertEquals(2, count.get());
+        assertTrue(xValues.contains(1.0f));
+        assertTrue(xValues.contains(10.0f));
+
+        // Verify updates were applied
+        List<Float> updatedXValues = new ArrayList<>();
+        world.componentQuery()
+            .forEach(Position.class, pos -> updatedXValues.add(pos.x()));
+
+        assertTrue(updatedXValues.contains(101.0f));
+        assertTrue(updatedXValues.contains(110.0f));
+    }
+
+    @Test
+    void typeSafeForEachWrapperWith2Components() {
+        world.spawn(new Position(1, 0, 0), new Velocity(10, 0, 0));
+        world.spawn(new Position(2, 0, 0), new Velocity(20, 0, 0));
+
+        AtomicInteger count = new AtomicInteger(0);
+
+        world.componentQuery()
+            .withMutable(Position.class)
+            .withReadOnly(Velocity.class)
+            .forEachWrapper(Position.class, Velocity.class, (pos, vel) -> {
+                // Both wrappers are typed - no manual casts needed for get()!
+                float dx = vel.get().dx();
+                
+                // Cast to Mutable only for modification operations
+                Mutable<Position> mutablePos = (Mutable<Position>) pos;
+                mutablePos.update(p -> new Position(p.x() + dx, p.y(), p.z()));
+                count.incrementAndGet();
+            });
+
+        assertEquals(2, count.get());
+
+        // Verify positions updated based on velocity
+        List<Float> xValues = new ArrayList<>();
+        world.componentQuery()
+            .forEach(Position.class, pos -> xValues.add(pos.x()));
+
+        assertTrue(xValues.contains(11.0f));  // 1 + 10
+        assertTrue(xValues.contains(22.0f));  // 2 + 20
+    }
+
+    @Test
+    void typeSafeForEachWrapperWith3Components() {
+        world.spawn(new Position(1, 0, 0), new Velocity(5, 0, 0), new Health(100, 100));
+
+        AtomicInteger count = new AtomicInteger(0);
+
+        world.componentQuery()
+            .withMutable(Position.class, Health.class)
+            .withReadOnly(Velocity.class)
+            .forEachWrapper(Position.class, Velocity.class, Health.class, (pos, vel, health) -> {
+                // Access all typed wrappers
+                assertEquals(1.0f, pos.get().x());
+                assertEquals(5.0f, vel.get().dx());
+                assertEquals(100, health.get().current());
+
+                // Update mutable components
+                ((Mutable<Position>) pos).update(p -> new Position(p.x() + vel.get().dx(), p.y(), p.z()));
+                ((Mutable<Health>) health).update(h -> new Health(h.current() - 10, h.max()));
+
+                count.incrementAndGet();
+            });
+
+        assertEquals(1, count.get());
+
+        // Verify updates
+        world.componentQuery()
+            .forEach(Position.class, pos -> assertEquals(6.0f, pos.x()));
+        world.componentQuery()
+            .forEach(Health.class, h -> assertEquals(90, h.current()));
+    }
+
+    @Test
+    void typeSafeForEachWrapperWith4Components() {
+        world.spawn(new Position(1, 0, 0), new Velocity(10, 0, 0), 
+                    new Health(100, 100), new Weapon(50));
+
+        AtomicInteger count = new AtomicInteger(0);
+
+        world.componentQuery()
+            .withMutable(Position.class)
+            .withReadOnly(Velocity.class, Health.class, Weapon.class)
+            .forEachWrapper(Position.class, Velocity.class, Health.class, Weapon.class,
+                (pos, vel, health, weapon) -> {
+                    // All 4 wrappers are typed
+                    assertEquals(1.0f, pos.get().x());
+                    assertEquals(10.0f, vel.get().dx());
+                    assertEquals(100, health.get().current());
+                    assertEquals(50, weapon.get().damage());
+
+                    // Only Position is mutable
+                    ((Mutable<Position>) pos).set(new Position(999, 0, 0));
+
+                    count.incrementAndGet();
+                });
+
+        assertEquals(1, count.get());
+
+        world.componentQuery()
+            .forEach(Position.class, pos -> assertEquals(999.0f, pos.x()));
+    }
+
+    @Test
+    void typeSafeForEachWrapperWith5Components() {
+        world.spawn(new Position(1, 0, 0), new Velocity(1, 0, 0), 
+                    new Health(100, 100), new Weapon(50), new Enemy(5));
+
+        AtomicInteger count = new AtomicInteger(0);
+
+        world.componentQuery()
+            .withMutable(Position.class, Health.class)
+            .withReadOnly(Velocity.class, Weapon.class, Enemy.class)
+            .forEachWrapper(Position.class, Velocity.class, Health.class, Weapon.class, Enemy.class,
+                (pos, vel, health, weapon, enemy) -> {
+                    // All 5 wrappers are typed
+                    assertEquals(1.0f, pos.get().x());
+                    assertEquals(1.0f, vel.get().dx());
+                    assertEquals(100, health.get().current());
+                    assertEquals(50, weapon.get().damage());
+                    assertEquals(5, enemy.get().level());
+
+                    // Update mutable components
+                    ((Mutable<Position>) pos).update(p -> new Position(
+                        p.x() + vel.get().dx() * weapon.get().damage(), p.y(), p.z()));
+                    ((Mutable<Health>) health).update(h -> new Health(
+                        h.current() - enemy.get().level(), h.max()));
+
+                    count.incrementAndGet();
+                });
+
+        assertEquals(1, count.get());
+
+        // Verify: position = 1 + 1*50 = 51, health = 100 - 5 = 95
+        world.componentQuery()
+            .forEach(Position.class, pos -> assertEquals(51.0f, pos.x()));
+        world.componentQuery()
+            .forEach(Health.class, h -> assertEquals(95, h.current()));
+    }
+
+    @Test
+    void typeSafeForEachWrapperWith6Components() {
+        // Need a 6th component - reuse Dead as a marker
+        world.spawn(new Position(1, 0, 0), new Velocity(2, 0, 0), 
+                    new Health(100, 100), new Weapon(10), new Enemy(3), new Dead());
+
+        AtomicInteger count = new AtomicInteger(0);
+
+        world.componentQuery()
+            .withMutable(Position.class)
+            .withReadOnly(Velocity.class, Health.class, Weapon.class, Enemy.class, Dead.class)
+            .forEachWrapper(Position.class, Velocity.class, Health.class, 
+                           Weapon.class, Enemy.class, Dead.class,
+                (pos, vel, health, weapon, enemy, dead) -> {
+                    // All 6 wrappers are typed!
+                    assertEquals(1.0f, pos.get().x());
+                    assertEquals(2.0f, vel.get().dx());
+                    assertEquals(100, health.get().current());
+                    assertEquals(10, weapon.get().damage());
+                    assertEquals(3, enemy.get().level());
+                    assertNotNull(dead.get()); // Dead is just a marker
+
+                    ((Mutable<Position>) pos).set(new Position(6, 6, 6));
+
+                    count.incrementAndGet();
+                });
+
+        assertEquals(1, count.get());
+
+        world.componentQuery()
+            .forEach(Position.class, pos -> {
+                assertEquals(6.0f, pos.x());
+                assertEquals(6.0f, pos.y());
+                assertEquals(6.0f, pos.z());
+            });
+    }
+
+    @Test
+    void typeSafeForEachWrapperWithReadOnlyPreventsModification() {
+        world.spawn(new Position(1, 2, 3));
+
+        world.componentQuery()
+            .withReadOnly(Position.class)
+            .forEachWrapper(Position.class, pos -> {
+                // Can read without issues
+                assertEquals(1.0f, pos.get().x());
+
+                // Casting to ReadOnly and trying to modify should throw
+                ReadOnly<Position> readOnlyPos = (ReadOnly<Position>) pos;
+                assertThrows(UnsupportedOperationException.class, () -> {
+                    readOnlyPos.set(new Position(100, 200, 300));
+                });
+            });
+    }
+
+    @Test
+    void typeSafeForEachWrapperMultipleEntities() {
+        // Create 20 entities with 2 components each
+        for (int i = 0; i < 20; i++) {
+            world.spawn(new Position(i, 0, 0), new Velocity(1, 0, 0));
+        }
+
+        AtomicInteger count = new AtomicInteger(0);
+
+        world.componentQuery()
+            .withMutable(Position.class)
+            .withReadOnly(Velocity.class)
+            .forEachWrapper(Position.class, Velocity.class, (pos, vel) -> {
+                ((Mutable<Position>) pos).update(p -> new Position(
+                    p.x() + vel.get().dx(), p.y(), p.z()));
+                count.incrementAndGet();
+            });
+
+        assertEquals(20, count.get());
+
+        // Verify all positions were updated (each x increased by 1)
+        List<Float> xValues = new ArrayList<>();
+        world.componentQuery()
+            .forEach(Position.class, pos -> xValues.add(pos.x()));
+
+        assertEquals(20, xValues.size());
+        for (int i = 0; i < 20; i++) {
+            assertTrue(xValues.contains((float)(i + 1)), "Should contain position with x=" + (i + 1));
+        }
+    }
+
+    @Test
+    void typeSafeForEachWrapperWithExclusion() {
+        world.spawn(new Position(1, 0, 0), new Velocity(5, 0, 0));
+        world.spawn(new Position(2, 0, 0), new Velocity(10, 0, 0), new Dead()); // Should be excluded
+
+        AtomicInteger count = new AtomicInteger(0);
+
+        world.componentQuery()
+            .withMutable(Position.class)
+            .withReadOnly(Velocity.class)
+            .without(Dead.class)
+            .forEachWrapper(Position.class, Velocity.class, (pos, vel) -> {
+                ((Mutable<Position>) pos).update(p -> new Position(p.x() + vel.get().dx(), p.y(), p.z()));
+                count.incrementAndGet();
+            });
+
+        assertEquals(1, count.get());
+
+        // Only the living entity should be updated
+        List<Float> xValues = new ArrayList<>();
+        world.componentQuery()
+            .without(Dead.class)
+            .forEach(Position.class, pos -> xValues.add(pos.x()));
+
+        assertEquals(1, xValues.size());
+        assertTrue(xValues.contains(6.0f));  // 1 + 5
+    }
+
+    @Test
+    void typeSafeForEachWrapperMaintainsWrapperType() {
+        world.spawn(new Position(1, 0, 0), new Velocity(2, 0, 0));
+
+        world.componentQuery()
+            .withMutable(Position.class)
+            .withReadOnly(Velocity.class)
+            .forEachWrapper(Position.class, Velocity.class, (pos, vel) -> {
+                // Verify wrapper types are correct
+                assertTrue(pos instanceof Mutable);
+                assertTrue(vel instanceof ReadOnly);
+            });
+    }
 }

@@ -15,30 +15,45 @@ import java.util.function.Predicate;
  * Allows querying entities by included and excluded component types,
  * without exposing implementation details like Entity or Archetype.
  *
- * <h2>Usage Examples</h2>
+ * <h2>Recommended: Type-Safe forEachWrapper API (1-6 components)</h2>
+ * <p>For queries with 1-6 components, use the type-safe {@code forEachWrapper} methods
+ * which provide compile-time type safety without manual casts:</p>
  * <pre>{@code
- * // Query with one component using generic forEach
+ * // Type-safe with 4 components - no manual casts needed!
+ * world.componentQuery()
+ *     .withMutable(Position.class, Health.class)
+ *     .withReadOnly(Velocity.class, Gravity.class)
+ *     .forEachWrapper(Position.class, Health.class, Velocity.class, Gravity.class,
+ *         (pos, health, vel, grav) -> {
+ *             // Fully typed ComponentWrappers! IDE autocomplete works perfectly
+ *             // pos, health are Mutable; vel, grav are ReadOnly based on declarations
+ *             pos.get().x(); // Access values
+ *             ((Mutable<Position>) pos).update(p -> new Position(
+ *                 p.x() + vel.get().dx(), p.y(), p.z()));
+ *         });
+ * }</pre>
+ *
+ * <h2>Generic API (7+ components or dynamic queries)</h2>
+ * <p>For queries with 7+ components, use the generic {@code forEach(Consumer<Object[]>, Class<?>...)}
+ * method with manual casts:</p>
+ * <pre>{@code
  * world.componentQuery()
  *     .withMutable(Position.class)
  *     .forEach(wrappers -> {
  *         Mutable<Position> pos = (Mutable<Position>) wrappers[0];
  *         pos.update(p -> new Position(p.x() + 10, p.y(), p.z()));
  *     }, Position.class);
+ * }</pre>
  *
- * // Query with multiple mutable and read-only components
+ * <h2>Read-Only Value Access</h2>
+ * <p>For simple read-only iteration without wrappers, use the direct forEach overloads:</p>
+ * <pre>{@code
+ * // Simple read-only access - receives unwrapped values
  * world.componentQuery()
- *     .withMutable(Position.class, Health.class)
- *     .withReadOnly(Velocity.class, Gravity.class)
- *     .forEach(wrappers -> {
- *         Mutable<Position> pos = (Mutable<Position>) wrappers[0];
- *         Mutable<Health> health = (Mutable<Health>) wrappers[1];
- *         ReadOnly<Velocity> vel = (ReadOnly<Velocity>) wrappers[2];
- *         ReadOnly<Gravity> grav = (ReadOnly<Gravity>) wrappers[3];
- *         
- *         pos.update(p -> applyPhysics(p, vel.get(), grav.get()));
- *         // vel.set(...) would throw UnsupportedOperationException
- *     }, Position.class, Health.class, Velocity.class, Gravity.class);
- *
+ *     .forEach(Position.class, Velocity.class, (pos, vel) -> {
+ *         System.out.println("Position: " + pos.x());
+ *     });
+ * 
  * // Count matching entities
  * int count = world.componentQuery()
  *     .with(Position.class)
@@ -255,6 +270,258 @@ public final class ComponentQuery {
                 consumer.accept(wrappers);
             }
         }
+    }
+
+    // ==================== Type-Safe ComponentWrapper forEach Methods ====================
+    
+    /**
+     * Type-safe forEach for 1 component with ComponentWrapper access.
+     * Provides compile-time type safety without manual casts.
+     * The wrapper type (Mutable or ReadOnly) is determined by withMutable/withReadOnly declarations.
+     *
+     * <h2>Usage Example</h2>
+     * <pre>{@code
+     * world.componentQuery()
+     *     .withMutable(Position.class)
+     *     .forEach(Position.class, pos -> {
+     *         // pos is typed as ComponentWrapper<Position>
+     *         // Cast to Mutable<Position> if declared with withMutable
+     *         ((Mutable<Position>) pos).update(p -> new Position(p.x() + 10, p.y(), p.z()));
+     *     });
+     * }</pre>
+     *
+     * @param typeA the class of the component type
+     * @param consumer the consumer that receives a typed ComponentWrapper
+     * @param <A> the component type
+     */
+    public <A> void forEachWrapper(Class<A> typeA, Consumer<ComponentWrapper<A>> consumer) {
+        forEach(wrappers -> {
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<A> a = (ComponentWrapper<A>) wrappers[0];
+            consumer.accept(a);
+        }, typeA);
+    }
+
+    /**
+     * Type-safe forEach for 2 components with ComponentWrapper access.
+     * Provides compile-time type safety without manual casts.
+     * The wrapper type (Mutable or ReadOnly) is determined by withMutable/withReadOnly declarations.
+     *
+     * <h2>Usage Example</h2>
+     * <pre>{@code
+     * world.componentQuery()
+     *     .withMutable(Position.class)
+     *     .withReadOnly(Velocity.class)
+     *     .forEach(Position.class, Velocity.class, (pos, vel) -> {
+     *         // pos and vel are typed ComponentWrappers
+     *         // No manual casts needed!
+     *         ((Mutable<Position>) pos).update(p -> new Position(
+     *             p.x() + vel.get().dx(), p.y(), p.z()));
+     *     });
+     * }</pre>
+     *
+     * @param typeA the class of the first component type
+     * @param typeB the class of the second component type
+     * @param consumer the consumer that receives typed ComponentWrappers
+     * @param <A> the first component type
+     * @param <B> the second component type
+     */
+    public <A, B> void forEachWrapper(Class<A> typeA, Class<B> typeB, 
+                                       BiConsumer<ComponentWrapper<A>, ComponentWrapper<B>> consumer) {
+        forEach(wrappers -> {
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<A> a = (ComponentWrapper<A>) wrappers[0];
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<B> b = (ComponentWrapper<B>) wrappers[1];
+            consumer.accept(a, b);
+        }, typeA, typeB);
+    }
+
+    /**
+     * Type-safe forEach for 3 components with ComponentWrapper access.
+     * Provides compile-time type safety without manual casts.
+     * The wrapper type (Mutable or ReadOnly) is determined by withMutable/withReadOnly declarations.
+     *
+     * <h2>Usage Example</h2>
+     * <pre>{@code
+     * world.componentQuery()
+     *     .withMutable(Position.class, Health.class)
+     *     .withReadOnly(Velocity.class)
+     *     .forEach(Position.class, Health.class, Velocity.class, (pos, health, vel) -> {
+     *         // All wrappers are typed - no manual casts needed!
+     *         ((Mutable<Position>) pos).update(p -> new Position(
+     *             p.x() + vel.get().dx(), p.y(), p.z()));
+     *     });
+     * }</pre>
+     *
+     * @param typeA the class of the first component type
+     * @param typeB the class of the second component type
+     * @param typeC the class of the third component type
+     * @param consumer the consumer that receives typed ComponentWrappers
+     * @param <A> the first component type
+     * @param <B> the second component type
+     * @param <C> the third component type
+     */
+    public <A, B, C> void forEachWrapper(Class<A> typeA, Class<B> typeB, Class<C> typeC, 
+                                          TriConsumer<ComponentWrapper<A>, ComponentWrapper<B>, 
+                                                      ComponentWrapper<C>> consumer) {
+        forEach(wrappers -> {
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<A> a = (ComponentWrapper<A>) wrappers[0];
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<B> b = (ComponentWrapper<B>) wrappers[1];
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<C> c = (ComponentWrapper<C>) wrappers[2];
+            consumer.accept(a, b, c);
+        }, typeA, typeB, typeC);
+    }
+
+    /**
+     * Type-safe forEach for 4 components with ComponentWrapper access.
+     * Provides compile-time type safety without manual casts.
+     * The wrapper type (Mutable or ReadOnly) is determined by withMutable/withReadOnly declarations.
+     *
+     * <h2>Usage Example</h2>
+     * <pre>{@code
+     * world.componentQuery()
+     *     .withMutable(Position.class, Health.class)
+     *     .withReadOnly(Velocity.class, Gravity.class)
+     *     .forEach(Position.class, Health.class, Velocity.class, Gravity.class,
+     *         (pos, health, vel, grav) -> {
+     *             // Fully typed! No casts needed!
+     *             ((Mutable<Position>) pos).update(p -> new Position(
+     *                 p.x() + vel.get().dx(), p.y() + grav.get().force(), p.z()));
+     *         });
+     * }</pre>
+     *
+     * @param typeA the class of the first component type
+     * @param typeB the class of the second component type
+     * @param typeC the class of the third component type
+     * @param typeD the class of the fourth component type
+     * @param consumer the consumer that receives typed ComponentWrappers
+     * @param <A> the first component type
+     * @param <B> the second component type
+     * @param <C> the third component type
+     * @param <D> the fourth component type
+     */
+    public <A, B, C, D> void forEachWrapper(Class<A> typeA, Class<B> typeB, Class<C> typeC, 
+                                             Class<D> typeD,
+                                             QuadConsumer<ComponentWrapper<A>, ComponentWrapper<B>, 
+                                                          ComponentWrapper<C>, ComponentWrapper<D>> consumer) {
+        forEach(wrappers -> {
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<A> a = (ComponentWrapper<A>) wrappers[0];
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<B> b = (ComponentWrapper<B>) wrappers[1];
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<C> c = (ComponentWrapper<C>) wrappers[2];
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<D> d = (ComponentWrapper<D>) wrappers[3];
+            consumer.accept(a, b, c, d);
+        }, typeA, typeB, typeC, typeD);
+    }
+
+    /**
+     * Type-safe forEach for 5 components with ComponentWrapper access.
+     * Provides compile-time type safety without manual casts.
+     * The wrapper type (Mutable or ReadOnly) is determined by withMutable/withReadOnly declarations.
+     *
+     * <h2>Usage Example</h2>
+     * <pre>{@code
+     * world.componentQuery()
+     *     .withMutable(Position.class, Health.class)
+     *     .withReadOnly(Velocity.class, Gravity.class, Weight.class)
+     *     .forEach(Position.class, Health.class, Velocity.class, Gravity.class, Weight.class,
+     *         (pos, health, vel, grav, weight) -> {
+     *             // All 5 wrappers are typed - no manual casts needed!
+     *             // Access components with get() and modify with set()/update()
+     *         });
+     * }</pre>
+     *
+     * @param typeA the class of the first component type
+     * @param typeB the class of the second component type
+     * @param typeC the class of the third component type
+     * @param typeD the class of the fourth component type
+     * @param typeE the class of the fifth component type
+     * @param consumer the consumer that receives typed ComponentWrappers
+     * @param <A> the first component type
+     * @param <B> the second component type
+     * @param <C> the third component type
+     * @param <D> the fourth component type
+     * @param <E> the fifth component type
+     */
+    public <A, B, C, D, E> void forEachWrapper(Class<A> typeA, Class<B> typeB, Class<C> typeC, 
+                                                Class<D> typeD, Class<E> typeE,
+                                                PentaConsumer<ComponentWrapper<A>, ComponentWrapper<B>, 
+                                                              ComponentWrapper<C>, ComponentWrapper<D>,
+                                                              ComponentWrapper<E>> consumer) {
+        forEach(wrappers -> {
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<A> a = (ComponentWrapper<A>) wrappers[0];
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<B> b = (ComponentWrapper<B>) wrappers[1];
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<C> c = (ComponentWrapper<C>) wrappers[2];
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<D> d = (ComponentWrapper<D>) wrappers[3];
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<E> e = (ComponentWrapper<E>) wrappers[4];
+            consumer.accept(a, b, c, d, e);
+        }, typeA, typeB, typeC, typeD, typeE);
+    }
+
+    /**
+     * Type-safe forEach for 6 components with ComponentWrapper access.
+     * Provides compile-time type safety without manual casts.
+     * The wrapper type (Mutable or ReadOnly) is determined by withMutable/withReadOnly declarations.
+     *
+     * <h2>Usage Example</h2>
+     * <pre>{@code
+     * world.componentQuery()
+     *     .withMutable(Position.class, Health.class, Armor.class)
+     *     .withReadOnly(Velocity.class, Gravity.class, Weight.class)
+     *     .forEach(Position.class, Health.class, Armor.class, 
+     *              Velocity.class, Gravity.class, Weight.class,
+     *         (pos, health, armor, vel, grav, weight) -> {
+     *             // All 6 wrappers are typed - no manual casts needed!
+     *             // For 7+ components, use the generic forEach(Consumer<Object[]>, Class<?>...) method
+     *         });
+     * }</pre>
+     *
+     * @param typeA the class of the first component type
+     * @param typeB the class of the second component type
+     * @param typeC the class of the third component type
+     * @param typeD the class of the fourth component type
+     * @param typeE the class of the fifth component type
+     * @param typeF the class of the sixth component type
+     * @param consumer the consumer that receives typed ComponentWrappers
+     * @param <A> the first component type
+     * @param <B> the second component type
+     * @param <C> the third component type
+     * @param <D> the fourth component type
+     * @param <E> the fifth component type
+     * @param <F> the sixth component type
+     */
+    public <A, B, C, D, E, F> void forEachWrapper(Class<A> typeA, Class<B> typeB, Class<C> typeC, 
+                                                   Class<D> typeD, Class<E> typeE, Class<F> typeF,
+                                                   HexaConsumer<ComponentWrapper<A>, ComponentWrapper<B>, 
+                                                                ComponentWrapper<C>, ComponentWrapper<D>,
+                                                                ComponentWrapper<E>, ComponentWrapper<F>> consumer) {
+        forEach(wrappers -> {
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<A> a = (ComponentWrapper<A>) wrappers[0];
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<B> b = (ComponentWrapper<B>) wrappers[1];
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<C> c = (ComponentWrapper<C>) wrappers[2];
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<D> d = (ComponentWrapper<D>) wrappers[3];
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<E> e = (ComponentWrapper<E>) wrappers[4];
+            @SuppressWarnings("unchecked")
+            ComponentWrapper<F> f = (ComponentWrapper<F>) wrappers[5];
+            consumer.accept(a, b, c, d, e, f);
+        }, typeA, typeB, typeC, typeD, typeE, typeF);
     }
 
     // ==================== Type-Safe Helper Methods ====================
