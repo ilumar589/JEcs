@@ -3,6 +3,8 @@ package io.github.ilumar589.jecs.benchmark;
 import io.github.ilumar589.jecs.component.Health;
 import io.github.ilumar589.jecs.component.Position;
 import io.github.ilumar589.jecs.component.Velocity;
+import io.github.ilumar589.jecs.query.Mutable;
+import io.github.ilumar589.jecs.query.ReadOnly;
 import io.github.ilumar589.jecs.system.System;
 import io.github.ilumar589.jecs.system.SystemMode;
 import io.github.ilumar589.jecs.system.SystemScheduler;
@@ -104,6 +106,7 @@ public class LargeScaleSystemBenchmark {
      * - Audio setup (no components)
      * - Input setup (read-only Velocity)
      */
+    @SuppressWarnings("unchecked")
     private List<System> createStartupSystems(int count) {
         List<System> systems = new ArrayList<>();
 
@@ -131,10 +134,11 @@ public class LargeScaleSystemBenchmark {
                             .mode(SystemMode.STARTUP)
                             .withMutable(Health.class)
                             .execute((w, q) -> {
-                                q.forEachMutable(Health.class, h -> {
+                                q.forEach(wrappers -> {
+                                    Mutable<Health> h = (Mutable<Health>) wrappers[0];
                                     // Initialize health
                                     h.set(new Health(100, 100));
-                                });
+                                }, Health.class);
                             })
                             .build();
                 }
@@ -184,6 +188,7 @@ public class LargeScaleSystemBenchmark {
      * - 50 systems writing to different components (can parallelize)
      * - 50 systems with conflicts (must serialize)
      */
+    @SuppressWarnings("unchecked")
     private List<System> createUpdateSystems(int count) {
         List<System> systems = new ArrayList<>();
 
@@ -213,13 +218,15 @@ public class LargeScaleSystemBenchmark {
                             .withMutable(Position.class)
                             .withReadOnly(Velocity.class)
                             .execute((w, q) -> {
-                                q.forEachWithAccess(Position.class, Velocity.class, (pos, vel) -> {
+                                q.forEach(wrappers -> {
+                                    Mutable<Position> pos = (Mutable<Position>) wrappers[0];
+                                    ReadOnly<Velocity> vel = (ReadOnly<Velocity>) wrappers[1];
                                     pos.set(new Position(
                                             pos.get().x() + vel.get().dx(),
                                             pos.get().y() + vel.get().dy(),
                                             pos.get().z() + vel.get().dz()
                                     ));
-                                });
+                                }, Position.class, Velocity.class);
                             })
                             .build();
                 }
@@ -229,14 +236,15 @@ public class LargeScaleSystemBenchmark {
                             .mode(SystemMode.UPDATE)
                             .withMutable(Velocity.class)
                             .execute((w, q) -> {
-                                q.forEachMutable(Velocity.class, vel -> {
+                                q.forEach(wrappers -> {
+                                    Mutable<Velocity> vel = (Mutable<Velocity>) wrappers[0];
                                     // Simulate AI decision
                                     vel.set(new Velocity(
                                             vel.get().dx() * 0.99f,
                                             vel.get().dy() * 0.99f,
                                             vel.get().dz() * 0.99f
                                     ));
-                                });
+                                }, Velocity.class);
                             })
                             .build();
                 }
@@ -246,11 +254,12 @@ public class LargeScaleSystemBenchmark {
                             .mode(SystemMode.UPDATE)
                             .withMutable(Health.class)
                             .execute((w, q) -> {
-                                q.forEachMutable(Health.class, h -> {
+                                q.forEach(wrappers -> {
+                                    Mutable<Health> h = (Mutable<Health>) wrappers[0];
                                     if (h.get().current() < h.get().max()) {
                                         h.set(new Health(h.get().current() + 1, h.get().max()));
                                     }
-                                });
+                                }, Health.class);
                             })
                             .build();
                 }

@@ -3,6 +3,8 @@ package io.github.ilumar589.jecs.benchmark;
 import io.github.ilumar589.jecs.component.Health;
 import io.github.ilumar589.jecs.component.Position;
 import io.github.ilumar589.jecs.component.Velocity;
+import io.github.ilumar589.jecs.query.Mutable;
+import io.github.ilumar589.jecs.query.ReadOnly;
 import io.github.ilumar589.jecs.system.System;
 import io.github.ilumar589.jecs.system.SystemScheduler;
 import io.github.ilumar589.jecs.world.EcsWorld;
@@ -32,6 +34,7 @@ public class SystemBenchmark {
     private SystemScheduler singleSystemScheduler;
 
     @Setup(Level.Trial)
+    @SuppressWarnings("unchecked")
     public void setup() {
         world = new EcsWorld();
 
@@ -56,29 +59,32 @@ public class SystemBenchmark {
             }
         }
 
-        // Create systems
+        // Create systems using the unified forEach API
         System physics = new System.Builder("Physics")
                 .withMutable(Position.class)
                 .withReadOnly(Velocity.class)
                 .execute((w, q) -> {
-                    q.forEachWithAccess(Position.class, Velocity.class, (pos, vel) -> {
+                    q.forEach(wrappers -> {
+                        Mutable<Position> pos = (Mutable<Position>) wrappers[0];
+                        ReadOnly<Velocity> vel = (ReadOnly<Velocity>) wrappers[1];
                         pos.set(new Position(
                                 pos.get().x() + vel.get().dx(),
                                 pos.get().y() + vel.get().dy(),
                                 pos.get().z() + vel.get().dz()
                         ));
-                    });
+                    }, Position.class, Velocity.class);
                 })
                 .build();
 
         System health = new System.Builder("Health")
                 .withMutable(Health.class)
                 .execute((w, q) -> {
-                    q.forEachMutable(Health.class, h -> {
+                    q.forEach(wrappers -> {
+                        Mutable<Health> h = (Mutable<Health>) wrappers[0];
                         if (h.get().current() < h.get().max()) {
                             h.set(new Health(h.get().current() + 1, h.get().max()));
                         }
-                    });
+                    }, Health.class);
                 })
                 .build();
 
