@@ -276,6 +276,8 @@ public final class ComponentQuery {
         
         // Pre-create wrapper instances once (reused by updating their entity index)
         // This reduces allocations from O(entities × components) to O(components)
+        // Note: Wrappers are created with null accessors but reset() is always called
+        // before the consumer accesses them, so this is safe.
         for (int i = 0; i < types.length; i++) {
             if (mutableTypes.contains(types[i])) {
                 wrappers[i] = new Mutable<>(null, 0);
@@ -299,7 +301,7 @@ public final class ComponentQuery {
             // Iterate entities - reuse wrapper instances
             int size = archetype.size();
             for (int entityIdx = 0; entityIdx < size; entityIdx++) {
-                // Reset wrappers to point to current entity
+                // Reset wrappers to point to current entity (must be called before consumer uses them)
                 for (int i = 0; i < types.length; i++) {
                     if (mutableTypes.contains(types[i])) {
                         Mutable<Object> mutable = (Mutable<Object>) wrappers[i];
