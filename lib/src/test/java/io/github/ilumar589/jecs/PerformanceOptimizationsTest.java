@@ -8,6 +8,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.BitSet;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -22,6 +23,9 @@ import static org.junit.jupiter.api.Assertions.*;
  *   <li>Query result caching</li>
  *   <li>Bitset-based component matching</li>
  *   <li>Reader/Writer caching in Archetype</li>
+ *   <li>LRU cache eviction</li>
+ *   <li>Parallel query execution</li>
+ *   <li>Thread-local argument arrays</li>
  * </ul>
  */
 class PerformanceOptimizationsTest {
@@ -356,5 +360,161 @@ class PerformanceOptimizationsTest {
         QueryCacheKey key2 = new QueryCacheKey(included, excluded2, additional);
 
         assertNotEquals(key1, key2);
+    }
+
+    // ==================== LRU Cache Tests ====================
+
+    @Test
+    void queryCacheLRUEviction() {
+        // Create a cache with small max size
+        QueryCache cache = new QueryCache(3);
+        
+        Set<Class<?>> empty = Set.of();
+        
+        // Add 3 entries - should all fit
+        QueryCacheKey key1 = new QueryCacheKey(Set.of(Position.class), empty, empty);
+        QueryCacheKey key2 = new QueryCacheKey(Set.of(Velocity.class), empty, empty);
+        QueryCacheKey key3 = new QueryCacheKey(Set.of(Health.class), empty, empty);
+        
+        cache.put(key1, List.of());
+        cache.put(key2, List.of());
+        cache.put(key3, List.of());
+        
+        assertEquals(3, cache.size());
+        
+        // Add 4th entry - should evict least recently used (key1)
+        QueryCacheKey key4 = new QueryCacheKey(Set.of(Dead.class), empty, empty);
+        cache.put(key4, List.of());
+        
+        assertEquals(3, cache.size());
+        assertNull(cache.get(key1)); // key1 should be evicted
+        assertNotNull(cache.get(key2));
+        assertNotNull(cache.get(key3));
+        assertNotNull(cache.get(key4));
+    }
+
+    @Test
+    void queryCacheLRUAccessUpdatesOrder() {
+        QueryCache cache = new QueryCache(3);
+        Set<Class<?>> empty = Set.of();
+        
+        QueryCacheKey key1 = new QueryCacheKey(Set.of(Position.class), empty, empty);
+        QueryCacheKey key2 = new QueryCacheKey(Set.of(Velocity.class), empty, empty);
+        QueryCacheKey key3 = new QueryCacheKey(Set.of(Health.class), empty, empty);
+        
+        cache.put(key1, List.of());
+        cache.put(key2, List.of());
+        cache.put(key3, List.of());
+        
+        // Access key1 to make it recently used
+        cache.get(key1);
+        
+        // Add new entry - should evict key2 (least recently used) not key1
+        QueryCacheKey key4 = new QueryCacheKey(Set.of(Dead.class), empty, empty);
+        cache.put(key4, List.of());
+        
+        assertNotNull(cache.get(key1)); // key1 should still be present
+        assertNull(cache.get(key2)); // key2 should be evicted
+        assertNotNull(cache.get(key3));
+        assertNotNull(cache.get(key4));
+    }
+
+    @Test
+    void queryCacheMaxSizeReturnsCorrectValue() {
+        QueryCache cache = new QueryCache(100);
+        assertEquals(100, cache.getMaxSize());
+    }
+
+    // ==================== Parallel Query Tests ====================
+
+    @Test
+    void parallelForEachSingleComponent() {
+        // Create many entities for parallel processing
+        for (int i = 0; i < 1000; i++) {
+            world.spawn(new Position(i, 0, 0));
+        }
+
+        AtomicInteger count = new AtomicInteger(0);
+        AtomicInteger sum = new AtomicInteger(0);
+        
+        world.componentQuery()
+            .forEachParallel(Position.class, pos -> {
+                count.incrementAndGet();
+                sum.addAndGet((int) pos.x());
+            });
+
+        assertEquals(1000, count.get());
+        // Sum of 0..999 = (999 * 1000) / 2 = 499500
+        assertEquals(499500, sum.get());
+    }
+
+    @Test
+    void parallelForEachTwoComponents() {
+        // Create entities with both Position and Velocity
+        for (int i = 0; i < 500; i++) {
+            world.spawn(new Position(i, 0, 0), new Velocity(1, 0, 0));
+        }
+
+        AtomicInteger count = new AtomicInteger(0);
+        
+        world.componentQuery()
+            .forEachParallel(Position.class, Velocity.class, (pos, vel) -> {
+                count.incrementAndGet();
+                // Verify we can read both components
+                assertTrue(pos.x() >= 0 && pos.x() < 500);
+                assertEquals(1.0f, vel.dx(), 0.01f);
+            });
+
+        assertEquals(500, count.get());
+    }
+
+    @Test
+    void parallelMutableForEach() {
+        // Create entities
+        for (int i = 0; i < 100; i++) {
+            world.spawn(new Position(i, 0, 0));
+        }
+
+        // Update all positions in parallel
+        world.componentQuery()
+            .withMutable(Position.class)
+            .forEachParallelMutable(Position.class, pos -> {
+                pos.update(p -> new Position(p.x() + 1000, p.y(), p.z()));
+            });
+
+        // Verify all positions were updated
+        AtomicInteger count = new AtomicInteger(0);
+        world.componentQuery()
+            .forEach(Position.class, pos -> {
+                assertTrue(pos.x() >= 1000);
+                count.incrementAndGet();
+            });
+        assertEquals(100, count.get());
+    }
+
+    // ==================== Thread-Local Args Tests ====================
+
+    @Test
+    void threadLocalArgsReduceAllocations() {
+        // This test verifies the functionality works, not actual allocation reduction
+        for (int i = 0; i < 100; i++) {
+            world.spawn(new Position(i, 0, 0), new Velocity(1, 0, 0));
+        }
+
+        // Run multiple queries to exercise thread-local array reuse
+        for (int iteration = 0; iteration < 10; iteration++) {
+            world.componentQuery()
+                .forEach(Position.class, Velocity.class, (pos, vel) -> {
+                    // Just verify we can read values correctly
+                    float x = pos.x();
+                    float dx = vel.dx();
+                });
+        }
+        
+        // Verify final count is still correct
+        int count = world.componentQuery()
+            .with(Position.class, Velocity.class)
+            .count();
+        assertEquals(100, count);
     }
 }

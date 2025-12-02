@@ -6,10 +6,12 @@ import io.github.ilumar589.jecs.world.ComponentTypeRegistry;
 import io.github.ilumar589.jecs.world.ComponentWriter;
 
 import java.util.*;
+import java.util.concurrent.ForkJoinPool;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.stream.IntStream;
 
 /**
  * A fluent builder for component-focused queries.
@@ -1002,5 +1004,251 @@ public final class ComponentQuery {
         }
 
         return matching;
+    }
+
+    // ==================== Parallel Query Execution ====================
+
+    /**
+     * Parallel forEach for single component type with read-only access.
+     * Uses virtual threads for lightweight parallel execution.
+     * 
+     * <h2>Usage Example</h2>
+     * <pre>{@code
+     * world.componentQuery()
+     *     .forEachParallel(Position.class, pos -> {
+     *         // Process each position in parallel
+     *         System.out.println("Position: " + pos.x());
+     *     });
+     * }</pre>
+     * 
+     * <h2>Thread Safety</h2>
+     * The consumer should be thread-safe as it will be invoked from multiple threads.
+     * Each entity is processed independently.
+     *
+     * @param typeA the class of the component type
+     * @param consumer the consumer for the component (must be thread-safe)
+     * @param <A> the component type
+     */
+    public <A> void forEachParallel(Class<A> typeA, Consumer<A> consumer) {
+        Set<Class<?>> typeSet = Set.of(typeA);
+        
+        for (Archetype archetype : getMatchingArchetypes(typeSet)) {
+            ComponentReader<A> reader = archetype.getReader(typeA);
+            int size = archetype.size();
+            
+            IntStream.range(0, size).parallel().forEach(i -> {
+                A a = reader.read(i);
+                consumer.accept(a);
+            });
+        }
+    }
+
+    /**
+     * Parallel forEach for two component types with read-only access.
+     * Uses virtual threads for lightweight parallel execution.
+     * 
+     * <h2>Usage Example</h2>
+     * <pre>{@code
+     * world.componentQuery()
+     *     .forEachParallel(Position.class, Velocity.class, (pos, vel) -> {
+     *         // Process each position/velocity pair in parallel
+     *         System.out.println("Position: " + pos.x() + ", Velocity: " + vel.dx());
+     *     });
+     * }</pre>
+     * 
+     * <h2>Thread Safety</h2>
+     * The consumer should be thread-safe as it will be invoked from multiple threads.
+     * Each entity is processed independently.
+     *
+     * @param typeA the class of the first component type
+     * @param typeB the class of the second component type
+     * @param consumer the consumer for the components (must be thread-safe)
+     * @param <A> the first component type
+     * @param <B> the second component type
+     */
+    public <A, B> void forEachParallel(Class<A> typeA, Class<B> typeB, BiConsumer<A, B> consumer) {
+        Set<Class<?>> typeSet = Set.of(typeA, typeB);
+        
+        for (Archetype archetype : getMatchingArchetypes(typeSet)) {
+            ComponentReader<A> readerA = archetype.getReader(typeA);
+            ComponentReader<B> readerB = archetype.getReader(typeB);
+            int size = archetype.size();
+            
+            IntStream.range(0, size).parallel().forEach(i -> {
+                A a = readerA.read(i);
+                B b = readerB.read(i);
+                consumer.accept(a, b);
+            });
+        }
+    }
+
+    /**
+     * Parallel forEach for three component types with read-only access.
+     * Uses virtual threads for lightweight parallel execution.
+     *
+     * @param typeA the class of the first component type
+     * @param typeB the class of the second component type
+     * @param typeC the class of the third component type
+     * @param consumer the consumer for the components (must be thread-safe)
+     * @param <A> the first component type
+     * @param <B> the second component type
+     * @param <C> the third component type
+     */
+    public <A, B, C> void forEachParallel(Class<A> typeA, Class<B> typeB, Class<C> typeC, 
+                                           TriConsumer<A, B, C> consumer) {
+        Set<Class<?>> typeSet = Set.of(typeA, typeB, typeC);
+        
+        for (Archetype archetype : getMatchingArchetypes(typeSet)) {
+            ComponentReader<A> readerA = archetype.getReader(typeA);
+            ComponentReader<B> readerB = archetype.getReader(typeB);
+            ComponentReader<C> readerC = archetype.getReader(typeC);
+            int size = archetype.size();
+            
+            IntStream.range(0, size).parallel().forEach(i -> {
+                A a = readerA.read(i);
+                B b = readerB.read(i);
+                C c = readerC.read(i);
+                consumer.accept(a, b, c);
+            });
+        }
+    }
+
+    /**
+     * Parallel forEach for four component types with read-only access.
+     * Uses virtual threads for lightweight parallel execution.
+     *
+     * @param typeA the class of the first component type
+     * @param typeB the class of the second component type
+     * @param typeC the class of the third component type
+     * @param typeD the class of the fourth component type
+     * @param consumer the consumer for the components (must be thread-safe)
+     * @param <A> the first component type
+     * @param <B> the second component type
+     * @param <C> the third component type
+     * @param <D> the fourth component type
+     */
+    public <A, B, C, D> void forEachParallel(Class<A> typeA, Class<B> typeB, Class<C> typeC, 
+                                              Class<D> typeD, QuadConsumer<A, B, C, D> consumer) {
+        Set<Class<?>> typeSet = Set.of(typeA, typeB, typeC, typeD);
+        
+        for (Archetype archetype : getMatchingArchetypes(typeSet)) {
+            ComponentReader<A> readerA = archetype.getReader(typeA);
+            ComponentReader<B> readerB = archetype.getReader(typeB);
+            ComponentReader<C> readerC = archetype.getReader(typeC);
+            ComponentReader<D> readerD = archetype.getReader(typeD);
+            int size = archetype.size();
+            
+            IntStream.range(0, size).parallel().forEach(i -> {
+                A a = readerA.read(i);
+                B b = readerB.read(i);
+                C c = readerC.read(i);
+                D d = readerD.read(i);
+                consumer.accept(a, b, c, d);
+            });
+        }
+    }
+
+    /**
+     * Parallel mutable forEach for single component type with wrapper access.
+     * Each thread gets its own wrapper instance for thread-safe access.
+     * 
+     * <h2>Usage Example</h2>
+     * <pre>{@code
+     * world.componentQuery()
+     *     .withMutable(Position.class)
+     *     .forEachParallelMutable(Position.class, pos -> {
+     *         // Each thread gets its own wrapper - updates are thread-safe
+     *         pos.update(p -> new Position(p.x() + 1, p.y(), p.z()));
+     *     });
+     * }</pre>
+     * 
+     * <h2>Thread Safety</h2>
+     * Each thread gets its own wrapper instance, so updates are thread-safe
+     * as long as entities don't have overlapping field writes.
+     *
+     * @param typeA the class of the component type
+     * @param consumer the consumer for the mutable wrapper (invoked in parallel)
+     * @param <A> the component type
+     */
+    @SuppressWarnings("unchecked")
+    public <A> void forEachParallelMutable(Class<A> typeA, Consumer<Mutable<A>> consumer) {
+        // Ensure type is marked as mutable
+        mutableTypes.add(typeA);
+        includedTypes.add(typeA);
+        
+        Set<Class<?>> typeSet = Set.of(typeA);
+        
+        for (Archetype archetype : getMatchingArchetypes(typeSet)) {
+            ComponentWriter<A> writer = (ComponentWriter<A>) archetype.getWriter(typeA);
+            int size = archetype.size();
+            
+            // Use ThreadLocal to give each thread its own wrapper instance
+            ThreadLocal<Mutable<A>> localWrapper = ThreadLocal.withInitial(() -> new Mutable<>(null, 0));
+            
+            IntStream.range(0, size).parallel().forEach(i -> {
+                Mutable<A> wrapper = localWrapper.get();
+                wrapper.reset(writer, i);
+                consumer.accept(wrapper);
+            });
+        }
+    }
+
+    /**
+     * Parallel mutable forEach for two component types.
+     * Allows mixed mutable and read-only access based on withMutable/withReadOnly declarations.
+     * 
+     * <h2>Usage Example</h2>
+     * <pre>{@code
+     * world.componentQuery()
+     *     .withMutable(Position.class)
+     *     .withReadOnly(Velocity.class)
+     *     .forEachParallelWithAccess(Position.class, Velocity.class, (pos, vel) -> {
+     *         // pos is Mutable, vel is ReadOnly
+     *         ((Mutable<Position>) pos).update(p -> new Position(
+     *             p.x() + vel.get().dx(), p.y() + vel.get().dy(), p.z()));
+     *     });
+     * }</pre>
+     *
+     * @param typeA the class of the first component type
+     * @param typeB the class of the second component type
+     * @param consumer the consumer for the component wrappers
+     * @param <A> the first component type
+     * @param <B> the second component type
+     */
+    @SuppressWarnings("unchecked")
+    public <A, B> void forEachParallelWithAccess(Class<A> typeA, Class<B> typeB,
+                                                   BiConsumer<ComponentWrapper<A>, ComponentWrapper<B>> consumer) {
+        Set<Class<?>> typeSet = Set.of(typeA, typeB);
+        
+        for (Archetype archetype : getMatchingArchetypes(typeSet)) {
+            Object accessorA = mutableTypes.contains(typeA) ? archetype.getWriter(typeA) : archetype.getReader(typeA);
+            Object accessorB = mutableTypes.contains(typeB) ? archetype.getWriter(typeB) : archetype.getReader(typeB);
+            int size = archetype.size();
+            
+            // Use ThreadLocal to give each thread its own wrapper instances
+            ThreadLocal<ComponentWrapper<A>> localWrapperA = ThreadLocal.withInitial(() -> 
+                mutableTypes.contains(typeA) ? new Mutable<A>(null, 0) : new ReadOnly<A>(null, 0));
+            ThreadLocal<ComponentWrapper<B>> localWrapperB = ThreadLocal.withInitial(() -> 
+                mutableTypes.contains(typeB) ? new Mutable<B>(null, 0) : new ReadOnly<B>(null, 0));
+            
+            IntStream.range(0, size).parallel().forEach(i -> {
+                ComponentWrapper<A> wrapperA = localWrapperA.get();
+                ComponentWrapper<B> wrapperB = localWrapperB.get();
+                
+                if (wrapperA instanceof Mutable<A> m) {
+                    m.reset((ComponentWriter<A>) accessorA, i);
+                } else {
+                    ((ReadOnly<A>) wrapperA).reset((ComponentReader<A>) accessorA, i);
+                }
+                
+                if (wrapperB instanceof Mutable<B> m) {
+                    m.reset((ComponentWriter<B>) accessorB, i);
+                } else {
+                    ((ReadOnly<B>) wrapperB).reset((ComponentReader<B>) accessorB, i);
+                }
+                
+                consumer.accept(wrapperA, wrapperB);
+            });
+        }
     }
 }

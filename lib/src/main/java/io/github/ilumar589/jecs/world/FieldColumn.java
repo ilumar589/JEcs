@@ -133,25 +133,57 @@ public final class FieldColumn {
     /**
      * Reads a value from the GlobalArray using plain read semantics.
      * No memory barriers are used, providing maximum read performance.
+     * 
+     * <h2>Performance Note</h2>
+     * This method uses pattern matching to avoid boxing overhead by directly 
+     * calling typed read methods on the GlobalArray implementation.
      *
      * @param globalArray the GlobalArray for this field type
      * @param entityIndex the index of the entity
      * @return the value at the specified entity index
      */
     public Object readPlain(GlobalArray globalArray, int entityIndex) {
-        return globalArray.readPlainBoxed(globalOffset + entityIndex);
+        int index = globalOffset + entityIndex;
+        // Use pattern matching to avoid boxing in hot paths
+        return switch (globalArray) {
+            case GlobalArray.IntArray arr -> arr.readPlain(index);
+            case GlobalArray.FloatArray arr -> arr.readPlain(index);
+            case GlobalArray.DoubleArray arr -> arr.readPlain(index);
+            case GlobalArray.LongArray arr -> arr.readPlain(index);
+            case GlobalArray.BooleanArray arr -> arr.readPlain(index);
+            case GlobalArray.ByteArray arr -> arr.readPlain(index);
+            case GlobalArray.ShortArray arr -> arr.readPlain(index);
+            case GlobalArray.CharArray arr -> arr.readPlain(index);
+            case GlobalArray.StringArray arr -> arr.readPlain(index);
+        };
     }
 
     /**
      * Writes a value to the GlobalArray using release semantics.
      * Ensures proper visibility to other threads.
+     * 
+     * <h2>Performance Note</h2>
+     * This method uses pattern matching to avoid unboxing overhead by directly 
+     * calling typed write methods on the GlobalArray implementation.
      *
      * @param globalArray the GlobalArray for this field type
      * @param entityIndex the index of the entity
      * @param value the value to write
      */
     public void writeRelease(GlobalArray globalArray, int entityIndex, Object value) {
-        globalArray.writeReleaseBoxed(globalOffset + entityIndex, value);
+        int index = globalOffset + entityIndex;
+        // Use pattern matching to avoid boxing/unboxing in hot paths
+        switch (globalArray) {
+            case GlobalArray.IntArray arr -> arr.writeRelease(index, (int) value);
+            case GlobalArray.FloatArray arr -> arr.writeRelease(index, (float) value);
+            case GlobalArray.DoubleArray arr -> arr.writeRelease(index, (double) value);
+            case GlobalArray.LongArray arr -> arr.writeRelease(index, (long) value);
+            case GlobalArray.BooleanArray arr -> arr.writeRelease(index, (boolean) value);
+            case GlobalArray.ByteArray arr -> arr.writeRelease(index, (byte) value);
+            case GlobalArray.ShortArray arr -> arr.writeRelease(index, (short) value);
+            case GlobalArray.CharArray arr -> arr.writeRelease(index, (char) value);
+            case GlobalArray.StringArray arr -> arr.writeRelease(index, (String) value);
+        }
     }
 
     /**

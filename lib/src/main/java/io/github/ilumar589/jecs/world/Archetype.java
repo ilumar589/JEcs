@@ -6,6 +6,7 @@ import org.jspecify.annotations.Nullable;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
+import java.lang.ref.SoftReference;
 import java.lang.reflect.RecordComponent;
 import java.util.*;
 
@@ -56,11 +57,25 @@ public final class Archetype {
     private static final int DEFAULT_INITIAL_CAPACITY = 64;
     
     /**
+     * Minimum initial capacity for adaptive sizing.
+     * Uses smaller initial capacity for memory efficiency.
+     */
+    private static final int MIN_INITIAL_CAPACITY = 8;
+    
+    /**
      * Growth factor when resizing arrays.
      * Using 2.0 provides power-of-2 sizes which have better cache alignment
      * and more predictable memory patterns.
      */
     private static final double GROWTH_FACTOR = 2.0;
+    
+    /**
+     * Thread-local storage for component read arguments.
+     * Reduces GC pressure by reusing Object[] arrays across component reads.
+     * The map key is the array size (number of fields), value is the reusable array.
+     */
+    private static final ThreadLocal<Map<Integer, Object[]>> THREAD_LOCAL_ARGS = 
+        ThreadLocal.withInitial(HashMap::new);
 
     // Global typed arrays - ONE per primitive type, using GlobalArray
     private final Map<Class<?>, GlobalArray> globalArrays;
@@ -70,9 +85,11 @@ public final class Archetype {
     private final Map<Class<?>, List<FieldColumn>> componentFieldColumns;
     private final Map<Class<?>, MethodHandle> componentConstructors;
     
-    // Cached readers and writers to avoid repeated allocation
-    private final Map<Class<?>, ComponentReader<?>> cachedReaders;
-    private final Map<Class<?>, ComponentWriter<?>> cachedWriters;
+    // Cached readers and writers with SoftReference for memory efficiency.
+    // SoftReferences allow GC to reclaim memory under pressure while
+    // keeping caches alive when memory is plentiful.
+    private final Map<Class<?>, SoftReference<ComponentReader<?>>> cachedReaders;
+    private final Map<Class<?>, SoftReference<ComponentWriter<?>>> cachedWriters;
     
     private final List<Entity> entities;
     private final Map<Entity, Integer> entityToIndex;
@@ -385,7 +402,8 @@ public final class Archetype {
 
     /**
      * Gets a read-only accessor for a component type.
-     * Readers are cached per component type to avoid repeated allocation.
+     * Readers are cached per component type using SoftReferences to avoid repeated allocation
+     * while allowing GC to reclaim memory under pressure.
      *
      * @param componentType the component type
      * @param <T> the component type
@@ -398,8 +416,9 @@ public final class Archetype {
             throw new IllegalArgumentException("Component type not in archetype: " + componentType);
         }
         
-        // Return cached reader if available
-        ComponentReader<?> cached = cachedReaders.get(componentType);
+        // Return cached reader if available and not garbage collected
+        SoftReference<ComponentReader<?>> ref = cachedReaders.get(componentType);
+        ComponentReader<?> cached = (ref != null) ? ref.get() : null;
         if (cached != null) {
             return (ComponentReader<T>) cached;
         }
@@ -419,13 +438,14 @@ public final class Archetype {
                 return size;
             }
         };
-        cachedReaders.put(componentType, reader);
+        cachedReaders.put(componentType, new SoftReference<>(reader));
         return reader;
     }
 
     /**
      * Gets a mutable accessor for a component type.
-     * Readers and writers are cached per component type to avoid repeated allocation.
+     * Writers are cached per component type using SoftReferences to avoid repeated allocation
+     * while allowing GC to reclaim memory under pressure.
      *
      * @param componentType the component type
      * @param <T> the component type
@@ -438,8 +458,9 @@ public final class Archetype {
             throw new IllegalArgumentException("Component type not in archetype: " + componentType);
         }
         
-        // Return cached writer if available
-        ComponentWriter<?> cached = cachedWriters.get(componentType);
+        // Return cached writer if available and not garbage collected
+        SoftReference<ComponentWriter<?>> ref = cachedWriters.get(componentType);
+        ComponentWriter<?> cached = (ref != null) ? ref.get() : null;
         if (cached != null) {
             return (ComponentWriter<T>) cached;
         }
@@ -475,19 +496,24 @@ public final class Archetype {
                 return size;
             }
         };
-        cachedWriters.put(componentType, writer);
+        cachedWriters.put(componentType, new SoftReference<>(writer));
         return writer;
     }
 
     /**
      * Reads a component from the primitive arrays and reconstructs it.
+     * Uses thread-local arrays to reduce GC pressure in hot paths.
      */
     private Object readComponent(Class<?> componentType, int entityIndex) {
         List<FieldColumn> columns = componentFieldColumns.get(componentType);
         MethodHandle constructor = componentConstructors.get(componentType);
         
-        Object[] args = new Object[columns.size()];
-        for (int i = 0; i < columns.size(); i++) {
+        // Use thread-local array to avoid allocation in hot paths
+        int size = columns.size();
+        Map<Integer, Object[]> argsCache = THREAD_LOCAL_ARGS.get();
+        Object[] args = argsCache.computeIfAbsent(size, Object[]::new);
+        
+        for (int i = 0; i < size; i++) {
             FieldColumn column = columns.get(i);
             GlobalArray array = getGlobalArray(column.getFieldClass());
             args[column.getFieldIndex()] = column.readPlain(array, entityIndex);
