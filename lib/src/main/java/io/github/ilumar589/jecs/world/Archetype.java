@@ -58,27 +58,8 @@ public final class Archetype {
      */
     private static final double GROWTH_FACTOR = 1.5;
 
-    // Global typed arrays - ONE per primitive type
-    private int[] globalInts;
-    private float[] globalFloats;
-    private double[] globalDoubles;
-    private long[] globalLongs;
-    private boolean[] globalBooleans;
-    private byte[] globalBytes;
-    private short[] globalShorts;
-    private char[] globalChars;
-    private String[] globalStrings;
-    
-    // Tracks allocation within each global array
-    private int intOffset = 0;
-    private int floatOffset = 0;
-    private int doubleOffset = 0;
-    private int longOffset = 0;
-    private int booleanOffset = 0;
-    private int byteOffset = 0;
-    private int shortOffset = 0;
-    private int charOffset = 0;
-    private int stringOffset = 0;
+    // Global typed arrays - ONE per primitive type, using GlobalArray
+    private final Map<Class<?>, GlobalArray> globalArrays;
 
     private final Set<Class<?>> componentTypes;
     private final Map<FieldKey, FieldColumn> fieldColumns;
@@ -119,11 +100,10 @@ public final class Archetype {
         this.componentConstructors = new HashMap<>();
         this.entities = new ArrayList<>(initialCapacity);
         this.entityToIndex = new HashMap<>();
+        this.globalArrays = new HashMap<>();
         
         // Count fields per type to allocate arrays
-        int totalInts = 0, totalFloats = 0, totalDoubles = 0, totalLongs = 0;
-        int totalBooleans = 0, totalBytes = 0, totalShorts = 0, totalChars = 0;
-        int totalStrings = 0;
+        Map<Class<?>, Integer> fieldCounts = new HashMap<>();
         
         for (Class<?> type : componentTypes) {
             if (!type.isRecord()) {
@@ -132,37 +112,34 @@ public final class Archetype {
             
             RecordComponent[] components = type.getRecordComponents();
             for (RecordComponent rc : components) {
-                PrimitiveType pt = PrimitiveType.fromClass(rc.getType());
-                if (pt == null) {
+                Class<?> fieldClass = rc.getType();
+                if (!GlobalArray.isSupported(fieldClass)) {
                     throw new IllegalArgumentException(
-                        "Unsupported field type: " + rc.getType().getName() + 
+                        "Unsupported field type: " + fieldClass.getName() + 
                         " for field " + rc.getName() + " in " + type.getName());
                 }
                 
-                switch (pt) {
-                    case INT -> totalInts++;
-                    case FLOAT -> totalFloats++;
-                    case DOUBLE -> totalDoubles++;
-                    case LONG -> totalLongs++;
-                    case BOOLEAN -> totalBooleans++;
-                    case BYTE -> totalBytes++;
-                    case SHORT -> totalShorts++;
-                    case CHAR -> totalChars++;
-                    case STRING -> totalStrings++;
-                }
+                // Normalize to primitive class for counting
+                Class<?> normalizedClass = normalizeFieldClass(fieldClass);
+                fieldCounts.merge(normalizedClass, 1, Integer::sum);
             }
         }
         
-        // Allocate global arrays
-        globalInts = totalInts > 0 ? new int[totalInts * capacity] : new int[0];
-        globalFloats = totalFloats > 0 ? new float[totalFloats * capacity] : new float[0];
-        globalDoubles = totalDoubles > 0 ? new double[totalDoubles * capacity] : new double[0];
-        globalLongs = totalLongs > 0 ? new long[totalLongs * capacity] : new long[0];
-        globalBooleans = totalBooleans > 0 ? new boolean[totalBooleans * capacity] : new boolean[0];
-        globalBytes = totalBytes > 0 ? new byte[totalBytes * capacity] : new byte[0];
-        globalShorts = totalShorts > 0 ? new short[totalShorts * capacity] : new short[0];
-        globalChars = totalChars > 0 ? new char[totalChars * capacity] : new char[0];
-        globalStrings = totalStrings > 0 ? new String[totalStrings * capacity] : new String[0];
+        // Allocate global arrays for each type that has fields
+        for (Map.Entry<Class<?>, Integer> entry : fieldCounts.entrySet()) {
+            Class<?> fieldClass = entry.getKey();
+            int fieldCount = entry.getValue();
+            GlobalArray array = GlobalArray.fromClass(fieldClass, fieldCount * capacity);
+            if (array != null) {
+                globalArrays.put(fieldClass, array);
+            }
+        }
+        
+        // Track allocation offsets per type
+        Map<Class<?>, Integer> offsets = new HashMap<>();
+        for (Class<?> fieldClass : fieldCounts.keySet()) {
+            offsets.put(fieldClass, 0);
+        }
         
         // Create field columns for each component type
         for (Class<?> type : componentTypes) {
@@ -171,74 +148,37 @@ public final class Archetype {
             
             for (int i = 0; i < components.length; i++) {
                 RecordComponent rc = components[i];
-                PrimitiveType pt = PrimitiveType.fromClass(rc.getType());
+                Class<?> normalizedClass = normalizeFieldClass(rc.getType());
                 
-                int offset = allocateFieldOffset(pt);
+                int offset = offsets.get(normalizedClass);
                 FieldColumn column = new FieldColumn(type, rc, i, offset);
                 
                 fieldColumns.put(column.getFieldKey(), column);
                 columns.add(column);
+                
+                // Update offset for next field of this type
+                offsets.put(normalizedClass, offset + capacity);
             }
             
             componentFieldColumns.put(type, columns);
             componentConstructors.put(type, createConstructorHandle(type, components));
         }
     }
-
+    
     /**
-     * Allocates space in the appropriate global array for a field.
-     *
-     * @param type the primitive type
-     * @return the starting offset for this field's data
+     * Normalizes a field class to its primitive form.
+     * Boxed types (Integer, Float, etc.) are converted to their primitive equivalents.
      */
-    private int allocateFieldOffset(PrimitiveType type) {
-        return switch (type) {
-            case INT -> {
-                int offset = intOffset;
-                intOffset += capacity;
-                yield offset;
-            }
-            case FLOAT -> {
-                int offset = floatOffset;
-                floatOffset += capacity;
-                yield offset;
-            }
-            case DOUBLE -> {
-                int offset = doubleOffset;
-                doubleOffset += capacity;
-                yield offset;
-            }
-            case LONG -> {
-                int offset = longOffset;
-                longOffset += capacity;
-                yield offset;
-            }
-            case BOOLEAN -> {
-                int offset = booleanOffset;
-                booleanOffset += capacity;
-                yield offset;
-            }
-            case BYTE -> {
-                int offset = byteOffset;
-                byteOffset += capacity;
-                yield offset;
-            }
-            case SHORT -> {
-                int offset = shortOffset;
-                shortOffset += capacity;
-                yield offset;
-            }
-            case CHAR -> {
-                int offset = charOffset;
-                charOffset += capacity;
-                yield offset;
-            }
-            case STRING -> {
-                int offset = stringOffset;
-                stringOffset += capacity;
-                yield offset;
-            }
-        };
+    private Class<?> normalizeFieldClass(Class<?> fieldClass) {
+        if (fieldClass == Integer.class) return int.class;
+        if (fieldClass == Float.class) return float.class;
+        if (fieldClass == Double.class) return double.class;
+        if (fieldClass == Long.class) return long.class;
+        if (fieldClass == Boolean.class) return boolean.class;
+        if (fieldClass == Byte.class) return byte.class;
+        if (fieldClass == Short.class) return short.class;
+        if (fieldClass == Character.class) return char.class;
+        return fieldClass;
     }
 
     /**
@@ -333,7 +273,7 @@ public final class Archetype {
             List<FieldColumn> columns = componentFieldColumns.get(type);
             
             for (FieldColumn column : columns) {
-                Object array = getGlobalArray(column.getType());
+                GlobalArray array = getGlobalArray(column.getFieldClass());
                 column.writeFromComponent(array, index, component);
             }
         }
@@ -366,7 +306,7 @@ public final class Archetype {
                 // Swap with last element
                 List<FieldColumn> columns = componentFieldColumns.get(type);
                 for (FieldColumn column : columns) {
-                    Object array = getGlobalArray(column.getType());
+                    GlobalArray array = getGlobalArray(column.getFieldClass());
                     Object lastValue = column.readPlain(array, lastIndex);
                     column.writeRelease(array, index, lastValue);
                 }
@@ -428,7 +368,7 @@ public final class Archetype {
         }
         
         for (FieldColumn column : columns) {
-            Object array = getGlobalArray(column.getType());
+            GlobalArray array = getGlobalArray(column.getFieldClass());
             column.writeFromComponent(array, index, component);
         }
     }
@@ -486,7 +426,7 @@ public final class Archetype {
                 }
                 
                 for (FieldColumn column : columns) {
-                    Object array = getGlobalArray(column.getType());
+                    GlobalArray array = getGlobalArray(column.getFieldClass());
                     column.writeFromComponent(array, entityIndex, component);
                 }
             }
@@ -508,7 +448,7 @@ public final class Archetype {
         Object[] args = new Object[columns.size()];
         for (int i = 0; i < columns.size(); i++) {
             FieldColumn column = columns.get(i);
-            Object array = getGlobalArray(column.getType());
+            GlobalArray array = getGlobalArray(column.getFieldClass());
             args[column.getFieldIndex()] = column.readPlain(array, entityIndex);
         }
         
@@ -521,20 +461,11 @@ public final class Archetype {
     }
 
     /**
-     * Returns the global array for a primitive type.
+     * Returns the GlobalArray for a field class.
      */
-    private Object getGlobalArray(PrimitiveType type) {
-        return switch (type) {
-            case INT -> globalInts;
-            case FLOAT -> globalFloats;
-            case DOUBLE -> globalDoubles;
-            case LONG -> globalLongs;
-            case BOOLEAN -> globalBooleans;
-            case BYTE -> globalBytes;
-            case SHORT -> globalShorts;
-            case CHAR -> globalChars;
-            case STRING -> globalStrings;
-        };
+    private GlobalArray getGlobalArray(Class<?> fieldClass) {
+        Class<?> normalizedClass = normalizeFieldClass(fieldClass);
+        return globalArrays.get(normalizedClass);
     }
 
     /**
@@ -555,98 +486,43 @@ public final class Archetype {
     private void resizeArrays(int newCapacity) {
         int oldCapacity = capacity;
         
-        // Create new arrays
-        int[] newInts = new int[intOffset > 0 ? (intOffset / oldCapacity) * newCapacity : 0];
-        float[] newFloats = new float[floatOffset > 0 ? (floatOffset / oldCapacity) * newCapacity : 0];
-        double[] newDoubles = new double[doubleOffset > 0 ? (doubleOffset / oldCapacity) * newCapacity : 0];
-        long[] newLongs = new long[longOffset > 0 ? (longOffset / oldCapacity) * newCapacity : 0];
-        boolean[] newBooleans = new boolean[booleanOffset > 0 ? (booleanOffset / oldCapacity) * newCapacity : 0];
-        byte[] newBytes = new byte[byteOffset > 0 ? (byteOffset / oldCapacity) * newCapacity : 0];
-        short[] newShorts = new short[shortOffset > 0 ? (shortOffset / oldCapacity) * newCapacity : 0];
-        char[] newChars = new char[charOffset > 0 ? (charOffset / oldCapacity) * newCapacity : 0];
-        String[] newStrings = new String[stringOffset > 0 ? (stringOffset / oldCapacity) * newCapacity : 0];
+        // Create new arrays for each type
+        Map<Class<?>, GlobalArray> newArrays = new HashMap<>();
+        for (Map.Entry<Class<?>, GlobalArray> entry : globalArrays.entrySet()) {
+            Class<?> fieldClass = entry.getKey();
+            GlobalArray oldArray = entry.getValue();
+            int numFields = oldArray.length() / oldCapacity;
+            GlobalArray newArray = oldArray.createNew(numFields * newCapacity);
+            newArrays.put(fieldClass, newArray);
+        }
         
-        // Reset offsets and copy data
-        intOffset = 0;
-        floatOffset = 0;
-        doubleOffset = 0;
-        longOffset = 0;
-        booleanOffset = 0;
-        byteOffset = 0;
-        shortOffset = 0;
-        charOffset = 0;
-        stringOffset = 0;
+        // Track new offsets per type
+        Map<Class<?>, Integer> newOffsets = new HashMap<>();
+        for (Class<?> fieldClass : globalArrays.keySet()) {
+            newOffsets.put(fieldClass, 0);
+        }
         
         // Update each field column with new offset and copy data
         for (Class<?> type : componentTypes) {
             List<FieldColumn> columns = componentFieldColumns.get(type);
             for (FieldColumn column : columns) {
                 int oldOffset = column.getGlobalOffset();
-                int newOffset;
+                Class<?> normalizedClass = normalizeFieldClass(column.getFieldClass());
                 
-                switch (column.getType()) {
-                    case INT -> {
-                        newOffset = intOffset;
-                        System.arraycopy(globalInts, oldOffset, newInts, newOffset, size);
-                        intOffset += newCapacity;
-                    }
-                    case FLOAT -> {
-                        newOffset = floatOffset;
-                        System.arraycopy(globalFloats, oldOffset, newFloats, newOffset, size);
-                        floatOffset += newCapacity;
-                    }
-                    case DOUBLE -> {
-                        newOffset = doubleOffset;
-                        System.arraycopy(globalDoubles, oldOffset, newDoubles, newOffset, size);
-                        doubleOffset += newCapacity;
-                    }
-                    case LONG -> {
-                        newOffset = longOffset;
-                        System.arraycopy(globalLongs, oldOffset, newLongs, newOffset, size);
-                        longOffset += newCapacity;
-                    }
-                    case BOOLEAN -> {
-                        newOffset = booleanOffset;
-                        System.arraycopy(globalBooleans, oldOffset, newBooleans, newOffset, size);
-                        booleanOffset += newCapacity;
-                    }
-                    case BYTE -> {
-                        newOffset = byteOffset;
-                        System.arraycopy(globalBytes, oldOffset, newBytes, newOffset, size);
-                        byteOffset += newCapacity;
-                    }
-                    case SHORT -> {
-                        newOffset = shortOffset;
-                        System.arraycopy(globalShorts, oldOffset, newShorts, newOffset, size);
-                        shortOffset += newCapacity;
-                    }
-                    case CHAR -> {
-                        newOffset = charOffset;
-                        System.arraycopy(globalChars, oldOffset, newChars, newOffset, size);
-                        charOffset += newCapacity;
-                    }
-                    case STRING -> {
-                        newOffset = stringOffset;
-                        System.arraycopy(globalStrings, oldOffset, newStrings, newOffset, size);
-                        stringOffset += newCapacity;
-                    }
-                    default -> throw new IllegalStateException("Unknown primitive type: " + column.getType());
-                }
+                int newOffset = newOffsets.get(normalizedClass);
+                GlobalArray oldArray = globalArrays.get(normalizedClass);
+                GlobalArray newArray = newArrays.get(normalizedClass);
+                
+                oldArray.copyTo(oldOffset, newArray, newOffset, size);
                 
                 column.setGlobalOffset(newOffset);
+                newOffsets.put(normalizedClass, newOffset + newCapacity);
             }
         }
         
         // Replace arrays
-        globalInts = newInts;
-        globalFloats = newFloats;
-        globalDoubles = newDoubles;
-        globalLongs = newLongs;
-        globalBooleans = newBooleans;
-        globalBytes = newBytes;
-        globalShorts = newShorts;
-        globalChars = newChars;
-        globalStrings = newStrings;
+        globalArrays.clear();
+        globalArrays.putAll(newArrays);
         
         capacity = newCapacity;
     }

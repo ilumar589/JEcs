@@ -440,41 +440,62 @@ class ArchetypeTest {
                 new Archetype(Set.of(NonRecordComponent.class)));
     }
 
-    // --- PrimitiveType tests ---
+    // --- GlobalArray tests (replacing PrimitiveType tests) ---
 
     @Test
-    void primitiveTypeFromClass() {
-        assertEquals(PrimitiveType.INT, PrimitiveType.fromClass(int.class));
-        assertEquals(PrimitiveType.INT, PrimitiveType.fromClass(Integer.class));
-        assertEquals(PrimitiveType.FLOAT, PrimitiveType.fromClass(float.class));
-        assertEquals(PrimitiveType.FLOAT, PrimitiveType.fromClass(Float.class));
-        assertEquals(PrimitiveType.DOUBLE, PrimitiveType.fromClass(double.class));
-        assertEquals(PrimitiveType.LONG, PrimitiveType.fromClass(long.class));
-        assertEquals(PrimitiveType.BOOLEAN, PrimitiveType.fromClass(boolean.class));
-        assertEquals(PrimitiveType.BYTE, PrimitiveType.fromClass(byte.class));
-        assertEquals(PrimitiveType.SHORT, PrimitiveType.fromClass(short.class));
-        assertEquals(PrimitiveType.CHAR, PrimitiveType.fromClass(char.class));
-        assertEquals(PrimitiveType.STRING, PrimitiveType.fromClass(String.class));
-        assertNull(PrimitiveType.fromClass(Object.class));
+    void globalArrayIsSupported() {
+        assertTrue(GlobalArray.isSupported(int.class));
+        assertTrue(GlobalArray.isSupported(Integer.class));
+        assertTrue(GlobalArray.isSupported(float.class));
+        assertTrue(GlobalArray.isSupported(Float.class));
+        assertTrue(GlobalArray.isSupported(double.class));
+        assertTrue(GlobalArray.isSupported(long.class));
+        assertTrue(GlobalArray.isSupported(boolean.class));
+        assertTrue(GlobalArray.isSupported(byte.class));
+        assertTrue(GlobalArray.isSupported(short.class));
+        assertTrue(GlobalArray.isSupported(char.class));
+        assertTrue(GlobalArray.isSupported(String.class));
+        assertFalse(GlobalArray.isSupported(Object.class));
     }
 
     @Test
-    void primitiveTypeCreateArray() {
-        assertInstanceOf(int[].class, PrimitiveType.INT.createArray(10));
-        assertInstanceOf(float[].class, PrimitiveType.FLOAT.createArray(10));
-        assertInstanceOf(double[].class, PrimitiveType.DOUBLE.createArray(10));
-        assertInstanceOf(long[].class, PrimitiveType.LONG.createArray(10));
-        assertInstanceOf(boolean[].class, PrimitiveType.BOOLEAN.createArray(10));
-        assertInstanceOf(String[].class, PrimitiveType.STRING.createArray(10));
+    void globalArrayFromClass() {
+        assertInstanceOf(GlobalArray.IntArray.class, GlobalArray.fromClass(int.class, 10));
+        assertInstanceOf(GlobalArray.IntArray.class, GlobalArray.fromClass(Integer.class, 10));
+        assertInstanceOf(GlobalArray.FloatArray.class, GlobalArray.fromClass(float.class, 10));
+        assertInstanceOf(GlobalArray.FloatArray.class, GlobalArray.fromClass(Float.class, 10));
+        assertInstanceOf(GlobalArray.DoubleArray.class, GlobalArray.fromClass(double.class, 10));
+        assertInstanceOf(GlobalArray.LongArray.class, GlobalArray.fromClass(long.class, 10));
+        assertInstanceOf(GlobalArray.BooleanArray.class, GlobalArray.fromClass(boolean.class, 10));
+        assertInstanceOf(GlobalArray.StringArray.class, GlobalArray.fromClass(String.class, 10));
+        assertNull(GlobalArray.fromClass(Object.class, 10));
+    }
+
+    @Test
+    void globalArrayReadWriteOperations() {
+        GlobalArray.IntArray intArray = (GlobalArray.IntArray) GlobalArray.fromClass(int.class, 10);
+        assertNotNull(intArray);
+        intArray.writeRelease(5, 42);
+        assertEquals(42, intArray.readPlain(5));
+        
+        GlobalArray.FloatArray floatArray = (GlobalArray.FloatArray) GlobalArray.fromClass(float.class, 10);
+        assertNotNull(floatArray);
+        floatArray.writeRelease(3, 3.14f);
+        assertEquals(3.14f, floatArray.readPlain(3), 0.001f);
+        
+        GlobalArray.StringArray stringArray = (GlobalArray.StringArray) GlobalArray.fromClass(String.class, 10);
+        assertNotNull(stringArray);
+        stringArray.writeRelease(0, "hello");
+        assertEquals("hello", stringArray.readPlain(0));
     }
 
     // --- FieldKey tests ---
 
     @Test
     void fieldKeyEquality() {
-        FieldKey key1 = new FieldKey(Position.class, "x", PrimitiveType.FLOAT);
-        FieldKey key2 = new FieldKey(Position.class, "x", PrimitiveType.FLOAT);
-        FieldKey key3 = new FieldKey(Velocity.class, "x", PrimitiveType.FLOAT);
+        FieldKey key1 = new FieldKey(Position.class, "x", float.class);
+        FieldKey key2 = new FieldKey(Position.class, "x", float.class);
+        FieldKey key3 = new FieldKey(Velocity.class, "x", float.class);
 
         assertEquals(key1, key2);
         assertNotEquals(key1, key3);  // Different component type
@@ -483,13 +504,15 @@ class ArchetypeTest {
     @Test
     void fieldKeyValidation() {
         assertThrows(IllegalArgumentException.class, () -> 
-                new FieldKey(null, "x", PrimitiveType.FLOAT));
+                new FieldKey(null, "x", float.class));
         assertThrows(IllegalArgumentException.class, () -> 
-                new FieldKey(Position.class, null, PrimitiveType.FLOAT));
+                new FieldKey(Position.class, null, float.class));
         assertThrows(IllegalArgumentException.class, () -> 
-                new FieldKey(Position.class, "", PrimitiveType.FLOAT));
+                new FieldKey(Position.class, "", float.class));
         assertThrows(IllegalArgumentException.class, () -> 
                 new FieldKey(Position.class, "x", null));
+        assertThrows(IllegalArgumentException.class, () -> 
+                new FieldKey(Position.class, "x", Object.class));  // Unsupported type
     }
 
     // --- ReadAll test ---
