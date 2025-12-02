@@ -99,13 +99,15 @@ public final class Archetype {
 
     /**
      * Creates a new Archetype for the given component types.
-     * All component types must be records with supported primitive fields.
+     * Uses adaptive initial capacity (minimum capacity) to reduce memory
+     * overhead for archetypes that may contain few entities.
+     * The capacity will grow automatically as entities are added.
      *
      * @param componentTypes the set of component types
      * @throws IllegalArgumentException if any type is not a record or has unsupported fields
      */
     public Archetype(Set<Class<?>> componentTypes) {
-        this(componentTypes, DEFAULT_INITIAL_CAPACITY);
+        this(componentTypes, MIN_INITIAL_CAPACITY);
     }
 
     /**
@@ -117,7 +119,7 @@ public final class Archetype {
      */
     public Archetype(Set<Class<?>> componentTypes, int initialCapacity) {
         this.componentTypes = Set.copyOf(componentTypes);
-        this.capacity = Math.max(1, initialCapacity);
+        this.capacity = Math.max(MIN_INITIAL_CAPACITY, initialCapacity);
         this.size = 0;
         
         this.fieldColumns = new HashMap<>();
@@ -125,7 +127,7 @@ public final class Archetype {
         this.componentConstructors = new HashMap<>();
         this.cachedReaders = new HashMap<>();
         this.cachedWriters = new HashMap<>();
-        this.entities = new ArrayList<>(initialCapacity);
+        this.entities = new ArrayList<>(this.capacity);
         this.entityToIndex = new HashMap<>();
         this.globalArrays = new HashMap<>();
         

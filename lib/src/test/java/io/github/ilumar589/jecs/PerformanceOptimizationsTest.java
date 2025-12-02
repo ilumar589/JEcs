@@ -517,4 +517,52 @@ class PerformanceOptimizationsTest {
             .count();
         assertEquals(100, count);
     }
+
+    // ==================== Adaptive Initial Capacity Tests ====================
+
+    @Test
+    void adaptiveInitialCapacityStartsSmall() {
+        // Create a single entity with a new component combination
+        world.spawn(new Position(1, 2, 3));
+        
+        // The archetype should work correctly even with minimal initial capacity
+        int count = world.componentQuery()
+            .with(Position.class)
+            .count();
+        assertEquals(1, count);
+        
+        // Verify we can read the component correctly
+        world.componentQuery()
+            .forEach(Position.class, pos -> {
+                assertEquals(1.0f, pos.x(), 0.01f);
+                assertEquals(2.0f, pos.y(), 0.01f);
+                assertEquals(3.0f, pos.z(), 0.01f);
+            });
+    }
+
+    @Test
+    void adaptiveCapacityGrowsCorrectly() {
+        // Start with a single entity
+        world.spawn(new Position(0, 0, 0));
+        
+        // Add many more entities - should trigger growth
+        for (int i = 1; i < 1000; i++) {
+            world.spawn(new Position(i, 0, 0));
+        }
+        
+        // Verify all entities are accessible
+        int count = world.componentQuery()
+            .with(Position.class)
+            .count();
+        assertEquals(1000, count);
+        
+        // Verify data integrity
+        AtomicInteger sum = new AtomicInteger(0);
+        world.componentQuery()
+            .forEach(Position.class, pos -> {
+                sum.addAndGet((int) pos.x());
+            });
+        // Sum of 0..999 = (999 * 1000) / 2 = 499500
+        assertEquals(499500, sum.get());
+    }
 }
