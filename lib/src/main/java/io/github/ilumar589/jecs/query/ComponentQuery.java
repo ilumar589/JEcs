@@ -568,6 +568,70 @@ public final class ComponentQuery {
         }, typeA, typeB, typeC, typeD, typeE, typeF);
     }
 
+    // ==================== Mutable Access Helper Methods ====================
+    
+    /**
+     * Iterates over all matching entities with mutable access to a single component.
+     * The component is automatically marked as mutable for this query.
+     *
+     * <h2>Usage Example</h2>
+     * <pre>{@code
+     * world.componentQuery()
+     *     .forEachMutable(Health.class, h -> {
+     *         if (h.get().current() < h.get().max()) {
+     *             h.set(new Health(h.get().current() + 1, h.get().max()));
+     *         }
+     *     });
+     * }</pre>
+     *
+     * @param typeA the class of the component type
+     * @param consumer the consumer for the mutable wrapper
+     * @param <A> the component type
+     */
+    @SuppressWarnings("unchecked")
+    public <A> void forEachMutable(Class<A> typeA, Consumer<Mutable<A>> consumer) {
+        withMutable(typeA);
+        forEach(wrappers -> {
+            Mutable<A> a = (Mutable<A>) wrappers[0];
+            consumer.accept(a);
+        }, typeA);
+    }
+
+    /**
+     * Iterates over all matching entities with access control for two components.
+     * The first component is mutable, the second is read-only.
+     * Components are automatically marked based on their wrapper types.
+     *
+     * <h2>Usage Example</h2>
+     * <pre>{@code
+     * world.componentQuery()
+     *     .forEachWithAccess(Position.class, Velocity.class, (pos, vel) -> {
+     *         pos.set(new Position(
+     *             pos.get().x() + vel.get().dx(),
+     *             pos.get().y() + vel.get().dy(),
+     *             pos.get().z() + vel.get().dz()
+     *         ));
+     *     });
+     * }</pre>
+     *
+     * @param typeA the class of the first (mutable) component type
+     * @param typeB the class of the second (read-only) component type
+     * @param consumer the consumer for the component wrappers
+     * @param <A> the first component type
+     * @param <B> the second component type
+     */
+    @SuppressWarnings("unchecked")
+    public <A, B> void forEachWithAccess(Class<A> typeA, Class<B> typeB, 
+                                          BiConsumer<Mutable<A>, ReadOnly<B>> consumer) {
+        withMutable(typeA);
+        withReadOnly(typeB);
+        forEach(wrappers -> {
+            Mutable<A> a = (Mutable<A>) wrappers[0];
+            ReadOnly<B> b = (ReadOnly<B>) wrappers[1];
+            consumer.accept(a, b);
+        }, typeA, typeB);
+    }
+
     // ==================== Type-Safe Helper Methods ====================
     
     /**

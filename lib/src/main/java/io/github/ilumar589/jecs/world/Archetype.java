@@ -50,13 +50,17 @@ import java.util.*;
 public final class Archetype {
     /**
      * Default initial capacity for entity storage.
+     * Using 64 provides better cache alignment and reduces reallocations
+     * for typical ECS workloads where archetypes often contain many entities.
      */
-    private static final int DEFAULT_INITIAL_CAPACITY = 16;
+    private static final int DEFAULT_INITIAL_CAPACITY = 64;
     
     /**
      * Growth factor when resizing arrays.
+     * Using 2.0 provides power-of-2 sizes which have better cache alignment
+     * and more predictable memory patterns.
      */
-    private static final double GROWTH_FACTOR = 1.5;
+    private static final double GROWTH_FACTOR = 2.0;
 
     // Global typed arrays - ONE per primitive type, using GlobalArray
     private final Map<Class<?>, GlobalArray> globalArrays;
@@ -65,6 +69,10 @@ public final class Archetype {
     private final Map<FieldKey, FieldColumn> fieldColumns;
     private final Map<Class<?>, List<FieldColumn>> componentFieldColumns;
     private final Map<Class<?>, MethodHandle> componentConstructors;
+    
+    // Cached readers and writers to avoid repeated allocation
+    private final Map<Class<?>, ComponentReader<?>> cachedReaders;
+    private final Map<Class<?>, ComponentWriter<?>> cachedWriters;
     
     private final List<Entity> entities;
     private final Map<Entity, Integer> entityToIndex;
@@ -98,6 +106,8 @@ public final class Archetype {
         this.fieldColumns = new HashMap<>();
         this.componentFieldColumns = new HashMap<>();
         this.componentConstructors = new HashMap<>();
+        this.cachedReaders = new HashMap<>();
+        this.cachedWriters = new HashMap<>();
         this.entities = new ArrayList<>(initialCapacity);
         this.entityToIndex = new HashMap<>();
         this.globalArrays = new HashMap<>();
@@ -375,6 +385,7 @@ public final class Archetype {
 
     /**
      * Gets a read-only accessor for a component type.
+     * Readers are cached per component type to avoid repeated allocation.
      *
      * @param componentType the component type
      * @param <T> the component type
@@ -387,7 +398,14 @@ public final class Archetype {
             throw new IllegalArgumentException("Component type not in archetype: " + componentType);
         }
         
-        return new ComponentReader<>() {
+        // Return cached reader if available
+        ComponentReader<?> cached = cachedReaders.get(componentType);
+        if (cached != null) {
+            return (ComponentReader<T>) cached;
+        }
+        
+        // Create and cache new reader
+        ComponentReader<T> reader = new ComponentReader<>() {
             @Override
             public T read(int entityIndex) {
                 if (entityIndex < 0 || entityIndex >= size) {
@@ -401,10 +419,13 @@ public final class Archetype {
                 return size;
             }
         };
+        cachedReaders.put(componentType, reader);
+        return reader;
     }
 
     /**
      * Gets a mutable accessor for a component type.
+     * Readers and writers are cached per component type to avoid repeated allocation.
      *
      * @param componentType the component type
      * @param <T> the component type
@@ -417,12 +438,18 @@ public final class Archetype {
             throw new IllegalArgumentException("Component type not in archetype: " + componentType);
         }
         
+        // Return cached writer if available
+        ComponentWriter<?> cached = cachedWriters.get(componentType);
+        if (cached != null) {
+            return (ComponentWriter<T>) cached;
+        }
+        
         List<FieldColumn> columns = componentFieldColumns.get(componentType);
         
         // Capture reference to archetype for inner class access
         final Archetype archetype = this;
         
-        return new ComponentWriter<>() {
+        ComponentWriter<T> writer = new ComponentWriter<>() {
             @Override
             public void write(int entityIndex, T component) {
                 if (entityIndex < 0 || entityIndex >= size) {
@@ -448,6 +475,8 @@ public final class Archetype {
                 return size;
             }
         };
+        cachedWriters.put(componentType, writer);
+        return writer;
     }
 
     /**
