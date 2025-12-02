@@ -650,9 +650,11 @@ class ComponentQueryApiTest {
         // Use mutable access to update positions
         world.componentQuery()
             .withMutable(Position.class)
-            .forEachMutable(Position.class, pos -> {
+            .forEach(wrappers -> {
+                @SuppressWarnings("unchecked")
+                Mutable<Position> pos = (Mutable<Position>) wrappers[0];
                 pos.update(p -> new Position(p.x() + 10, p.y(), p.z()));
-            });
+            }, Position.class);
 
         // Verify positions were updated
         List<Float> xValues = new ArrayList<>();
@@ -672,13 +674,17 @@ class ComponentQueryApiTest {
         world.componentQuery()
             .withMutable(Position.class)
             .withReadOnly(Velocity.class)
-            .forEachWithAccess(Position.class, Velocity.class, (pos, vel) -> {
+            .forEach(wrappers -> {
+                @SuppressWarnings("unchecked")
+                Mutable<Position> pos = (Mutable<Position>) wrappers[0];
+                @SuppressWarnings("unchecked")
+                ReadOnly<Velocity> vel = (ReadOnly<Velocity>) wrappers[1];
                 pos.update(p -> new Position(
                     p.x() + vel.get().dx(),
                     p.y() + vel.get().dy(),
                     p.z() + vel.get().dz()
                 ));
-            });
+            }, Position.class, Velocity.class);
 
         // Verify positions were updated based on velocities
         List<Float> xValues = new ArrayList<>();
@@ -708,12 +714,15 @@ class ComponentQueryApiTest {
 
         // Only modify positions with x > 1
         world.componentQuery()
-            .forEachMutable(Position.class, pos -> {
+            .withMutable(Position.class)
+            .forEach(wrappers -> {
+                @SuppressWarnings("unchecked")
+                Mutable<Position> pos = (Mutable<Position>) wrappers[0];
                 if (pos.get().x() > 1.5f) {
                     pos.set(new Position(100, 0, 0));
                 }
                 // Don't modify positions with x <= 1.5
-            });
+            }, Position.class);
 
         List<Float> xValues = new ArrayList<>();
         world.componentQuery()
@@ -738,7 +747,11 @@ class ComponentQueryApiTest {
         world.componentQuery()
             .withMutable(Position.class)
             .withReadOnly(Velocity.class)
-            .forEachWithAccess(Position.class, Velocity.class, (pos, vel) -> {
+            .forEach(wrappers -> {
+                @SuppressWarnings("unchecked")
+                Mutable<Position> pos = (Mutable<Position>) wrappers[0];
+                @SuppressWarnings("unchecked")
+                ReadOnly<Velocity> vel = (ReadOnly<Velocity>) wrappers[1];
                 Position current = pos.get();
                 Velocity velocity = vel.get();
                 pos.set(new Position(
@@ -746,7 +759,7 @@ class ComponentQueryApiTest {
                     current.y() + velocity.dy(),
                     current.z() + velocity.dz()
                 ));
-            });
+            }, Position.class, Velocity.class);
 
         // Verify all positions were updated
         AtomicInteger updated = new AtomicInteger(0);
@@ -771,12 +784,14 @@ class ComponentQueryApiTest {
         world.componentQuery()
             .withMutable(Health.class)
             .without(Dead.class)
-            .forEachMutable(Health.class, health -> {
+            .forEach(wrappers -> {
+                @SuppressWarnings("unchecked")
+                Mutable<Health> health = (Mutable<Health>) wrappers[0];
                 health.update(h -> new Health(
                     Math.max(0, h.current() - 10),
                     h.max()
                 ));
-            });
+            }, Health.class);
 
         // Verify only living entities were damaged
         List<Integer> healthValues = new ArrayList<>();
@@ -794,5 +809,271 @@ class ComponentQueryApiTest {
             .with(Dead.class)
             .forEach(Health.class, h -> deadHealth.set(h.current()));
         assertEquals(0, deadHealth.get());
+    }
+
+    // ==================== New Generic forEach Tests ====================
+
+    @Test
+    void genericForEachWithFiveComponents() {
+        // Create entities with 5 components
+        world.spawn(
+            new Position(1, 2, 3),
+            new Velocity(0.5f, 0.5f, 0.5f),
+            new Health(100, 100),
+            new Weapon(50),
+            new Enemy(5)
+        );
+
+        AtomicInteger count = new AtomicInteger(0);
+        world.componentQuery()
+            .withMutable(Position.class, Health.class)
+            .withReadOnly(Velocity.class, Weapon.class, Enemy.class)
+            .forEach(wrappers -> {
+                @SuppressWarnings("unchecked")
+                Mutable<Position> pos = (Mutable<Position>) wrappers[0];
+                @SuppressWarnings("unchecked")
+                Mutable<Health> health = (Mutable<Health>) wrappers[1];
+                @SuppressWarnings("unchecked")
+                ReadOnly<Velocity> vel = (ReadOnly<Velocity>) wrappers[2];
+                @SuppressWarnings("unchecked")
+                ReadOnly<Weapon> weapon = (ReadOnly<Weapon>) wrappers[3];
+                @SuppressWarnings("unchecked")
+                ReadOnly<Enemy> enemy = (ReadOnly<Enemy>) wrappers[4];
+
+                // Verify we can read all components
+                assertEquals(1.0f, pos.get().x());
+                assertEquals(0.5f, vel.get().dx());
+                assertEquals(100, health.get().current());
+                assertEquals(50, weapon.get().damage());
+                assertEquals(5, enemy.get().level());
+
+                // Update mutable components
+                pos.set(new Position(10, 20, 30));
+                health.set(new Health(50, 100));
+
+                count.incrementAndGet();
+            }, Position.class, Health.class, Velocity.class, Weapon.class, Enemy.class);
+
+        assertEquals(1, count.get());
+
+        // Verify updates were applied
+        world.componentQuery()
+            .forEach(Position.class, pos -> {
+                assertEquals(10.0f, pos.x());
+                assertEquals(20.0f, pos.y());
+                assertEquals(30.0f, pos.z());
+            });
+
+        world.componentQuery()
+            .forEach(Health.class, h -> {
+                assertEquals(50, h.current());
+                assertEquals(100, h.max());
+            });
+    }
+
+    @Test
+    void readOnlyThrowsExceptionOnSet() {
+        world.spawn(new Position(1, 2, 3));
+
+        world.componentQuery()
+            .withReadOnly(Position.class)
+            .forEach(wrappers -> {
+                @SuppressWarnings("unchecked")
+                ReadOnly<Position> pos = (ReadOnly<Position>) wrappers[0];
+
+                // Verify we can read
+                assertEquals(1.0f, pos.get().x());
+
+                // Verify set throws exception
+                assertThrows(UnsupportedOperationException.class, () -> {
+                    pos.set(new Position(100, 200, 300));
+                });
+            }, Position.class);
+    }
+
+    @Test
+    void readOnlyThrowsExceptionOnUpdate() {
+        world.spawn(new Velocity(1, 2, 3));
+
+        world.componentQuery()
+            .withReadOnly(Velocity.class)
+            .forEach(wrappers -> {
+                @SuppressWarnings("unchecked")
+                ReadOnly<Velocity> vel = (ReadOnly<Velocity>) wrappers[0];
+
+                // Verify we can read
+                assertEquals(1.0f, vel.get().dx());
+
+                // Verify update throws exception
+                assertThrows(UnsupportedOperationException.class, () -> {
+                    vel.update(v -> new Velocity(v.dx() + 10, v.dy(), v.dz()));
+                });
+            }, Velocity.class);
+    }
+
+    @Test
+    void directPrimitiveWritesAreImmediatelyVisible() {
+        world.spawn(new Position(0, 0, 0));
+
+        // Create a mutable wrapper and verify writes are visible immediately
+        world.componentQuery()
+            .withMutable(Position.class)
+            .forEach(wrappers -> {
+                @SuppressWarnings("unchecked")
+                Mutable<Position> pos = (Mutable<Position>) wrappers[0];
+
+                // Initial value
+                assertEquals(0.0f, pos.get().x());
+
+                // Write a new value
+                pos.set(new Position(100, 200, 300));
+
+                // Value should be immediately visible through get()
+                assertEquals(100.0f, pos.get().x());
+                assertEquals(200.0f, pos.get().y());
+                assertEquals(300.0f, pos.get().z());
+            }, Position.class);
+
+        // Verify the write persisted after the forEach
+        world.componentQuery()
+            .forEach(Position.class, pos -> {
+                assertEquals(100.0f, pos.x());
+                assertEquals(200.0f, pos.y());
+                assertEquals(300.0f, pos.z());
+            });
+    }
+
+    @Test
+    void mixedMutableAndReadOnlyComponents() {
+        world.spawn(new Position(0, 0, 0), new Velocity(1, 2, 3), new Health(100, 100));
+
+        world.componentQuery()
+            .withMutable(Position.class)
+            .withReadOnly(Velocity.class)
+            .withMutable(Health.class)
+            .forEach(wrappers -> {
+                @SuppressWarnings("unchecked")
+                Mutable<Position> pos = (Mutable<Position>) wrappers[0];
+                @SuppressWarnings("unchecked")
+                ReadOnly<Velocity> vel = (ReadOnly<Velocity>) wrappers[1];
+                @SuppressWarnings("unchecked")
+                Mutable<Health> health = (Mutable<Health>) wrappers[2];
+
+                // Read from read-only
+                float dx = vel.get().dx();
+                float dy = vel.get().dy();
+                float dz = vel.get().dz();
+
+                // Write to mutable components based on read-only
+                pos.update(p -> new Position(p.x() + dx, p.y() + dy, p.z() + dz));
+                health.update(h -> new Health(h.current() - 10, h.max()));
+            }, Position.class, Velocity.class, Health.class);
+
+        // Verify updates
+        world.componentQuery()
+            .forEach(Position.class, pos -> {
+                assertEquals(1.0f, pos.x());
+                assertEquals(2.0f, pos.y());
+                assertEquals(3.0f, pos.z());
+            });
+
+        world.componentQuery()
+            .forEach(Health.class, h -> {
+                assertEquals(90, h.current());
+            });
+
+        // Verify velocity unchanged
+        world.componentQuery()
+            .forEach(Velocity.class, vel -> {
+                assertEquals(1.0f, vel.dx());
+                assertEquals(2.0f, vel.dy());
+                assertEquals(3.0f, vel.dz());
+            });
+    }
+
+    @Test
+    void componentWrapperInterfaceWorks() {
+        world.spawn(new Position(1, 2, 3), new Velocity(4, 5, 6));
+
+        world.componentQuery()
+            .withMutable(Position.class)
+            .withReadOnly(Velocity.class)
+            .forEach(wrappers -> {
+                // Both Mutable and ReadOnly implement ComponentWrapper
+                ComponentWrapper<Position> posWrapper = (ComponentWrapper<Position>) wrappers[0];
+                ComponentWrapper<Velocity> velWrapper = (ComponentWrapper<Velocity>) wrappers[1];
+
+                // Can access via the interface
+                Position pos = posWrapper.get();
+                Velocity vel = velWrapper.get();
+
+                assertEquals(1.0f, pos.x());
+                assertEquals(4.0f, vel.dx());
+            }, Position.class, Velocity.class);
+    }
+
+    @Test
+    void multipleEntitiesWithGenericForEach() {
+        // Create 10 entities
+        for (int i = 0; i < 10; i++) {
+            world.spawn(new Position(i, 0, 0), new Velocity(1, 0, 0));
+        }
+
+        AtomicInteger count = new AtomicInteger(0);
+        world.componentQuery()
+            .withMutable(Position.class)
+            .withReadOnly(Velocity.class)
+            .forEach(wrappers -> {
+                @SuppressWarnings("unchecked")
+                Mutable<Position> pos = (Mutable<Position>) wrappers[0];
+                @SuppressWarnings("unchecked")
+                ReadOnly<Velocity> vel = (ReadOnly<Velocity>) wrappers[1];
+
+                // Update position based on velocity
+                pos.update(p -> new Position(
+                    p.x() + vel.get().dx(),
+                    p.y() + vel.get().dy(),
+                    p.z() + vel.get().dz()
+                ));
+
+                count.incrementAndGet();
+            }, Position.class, Velocity.class);
+
+        assertEquals(10, count.get());
+
+        // Verify all positions were updated
+        List<Float> xValues = new ArrayList<>();
+        world.componentQuery()
+            .forEach(Position.class, pos -> xValues.add(pos.x()));
+
+        // Each x value should be increased by 1
+        for (int i = 0; i < 10; i++) {
+            assertTrue(xValues.contains((float)(i + 1)));
+        }
+    }
+
+    @Test
+    void readOnlyExceptionMessageIsHelpful() {
+        world.spawn(new Position(1, 2, 3));
+
+        world.componentQuery()
+            .withReadOnly(Position.class)
+            .forEach(wrappers -> {
+                @SuppressWarnings("unchecked")
+                ReadOnly<Position> pos = (ReadOnly<Position>) wrappers[0];
+
+                // Read to cache the value
+                pos.get();
+
+                // Verify exception message is helpful
+                UnsupportedOperationException exception = assertThrows(
+                    UnsupportedOperationException.class,
+                    () -> pos.set(new Position(100, 200, 300))
+                );
+
+                assertTrue(exception.getMessage().contains("Position"));
+                assertTrue(exception.getMessage().contains("read-only"));
+                assertTrue(exception.getMessage().contains("withMutable"));
+            }, Position.class);
     }
 }

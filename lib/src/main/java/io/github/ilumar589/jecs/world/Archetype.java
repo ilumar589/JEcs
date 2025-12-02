@@ -411,12 +411,16 @@ public final class Archetype {
      * @return a ComponentWriter for the specified type
      * @throws IllegalArgumentException if the type is not in this archetype
      */
+    @SuppressWarnings("unchecked")
     public <T> ComponentWriter<T> getWriter(Class<T> componentType) {
         if (!componentTypes.contains(componentType)) {
             throw new IllegalArgumentException("Component type not in archetype: " + componentType);
         }
         
         List<FieldColumn> columns = componentFieldColumns.get(componentType);
+        
+        // Capture reference to archetype for inner class access
+        final Archetype archetype = this;
         
         return new ComponentWriter<>() {
             @Override
@@ -429,6 +433,14 @@ public final class Archetype {
                     GlobalArray array = getGlobalArray(column.getFieldClass());
                     column.writeFromComponent(array, entityIndex, component);
                 }
+            }
+            
+            @Override
+            public T read(int entityIndex) {
+                if (entityIndex < 0 || entityIndex >= size) {
+                    throw new IndexOutOfBoundsException("Index: " + entityIndex + ", Size: " + size);
+                }
+                return (T) archetype.readComponent(componentType, entityIndex);
             }
             
             @Override

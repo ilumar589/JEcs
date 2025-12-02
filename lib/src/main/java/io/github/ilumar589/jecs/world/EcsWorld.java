@@ -315,20 +315,27 @@ public final class EcsWorld {
      *
      * <h2>Usage Examples</h2>
      * <pre>{@code
-     * // Simple query with inclusion
+     * // Simple query with mutable component
      * world.componentQuery()
-     *     .with(Position.class, Velocity.class)
-     *     .forEach((pos, vel) -> {
-     *         System.out.println("Pos: " + pos + ", Vel: " + vel);
-     *     });
+     *     .withMutable(Position.class)
+     *     .forEach(wrappers -> {
+     *         Mutable<Position> pos = (Mutable<Position>) wrappers[0];
+     *         pos.update(p -> new Position(p.x() + 10, p.y(), p.z()));
+     *     }, Position.class);
      *
-     * // Query with exclusion
+     * // Query with mutable and read-only components
      * world.componentQuery()
-     *     .with(Position.class, Health.class)
-     *     .without(Dead.class)
-     *     .forEach((pos, health) -> {
-     *         // Process only living entities
-     *     });
+     *     .withMutable(Position.class)
+     *     .withReadOnly(Velocity.class)
+     *     .forEach(wrappers -> {
+     *         Mutable<Position> pos = (Mutable<Position>) wrappers[0];
+     *         ReadOnly<Velocity> vel = (ReadOnly<Velocity>) wrappers[1];
+     *         pos.update(p -> new Position(
+     *             p.x() + vel.get().dx(),
+     *             p.y() + vel.get().dy(),
+     *             p.z() + vel.get().dz()
+     *         ));
+     *     }, Position.class, Velocity.class);
      *
      * // Count matching entities
      * int count = world.componentQuery()
@@ -340,7 +347,7 @@ public final class EcsWorld {
      * @return a new ComponentQuery builder
      */
     public ComponentQuery componentQuery() {
-        return new ComponentQuery(archetypes.values(), this::setComponent);
+        return new ComponentQuery(archetypes.values());
     }
 
     /**
