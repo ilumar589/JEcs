@@ -73,12 +73,7 @@ public final class ReadOnly<T> implements ComponentWrapper<T> {
      * @throws UnsupportedOperationException always
      */
     public void set(T newValue) {
-        String typeName = valueCached && cachedValue != null 
-            ? cachedValue.getClass().getSimpleName() 
-            : "unknown";
-        throw new UnsupportedOperationException(
-            "Cannot modify read-only component of type: " + typeName + 
-            ". Use withMutable() instead of withReadOnly() if you need to modify this component.");
+        throw createReadOnlyException();
     }
 
     /**
@@ -89,10 +84,17 @@ public final class ReadOnly<T> implements ComponentWrapper<T> {
      * @throws UnsupportedOperationException always
      */
     public void update(Function<T, T> transformer) {
+        throw createReadOnlyException();
+    }
+
+    /**
+     * Creates an UnsupportedOperationException with a helpful error message.
+     */
+    private UnsupportedOperationException createReadOnlyException() {
         String typeName = valueCached && cachedValue != null 
             ? cachedValue.getClass().getSimpleName() 
             : "unknown";
-        throw new UnsupportedOperationException(
+        return new UnsupportedOperationException(
             "Cannot modify read-only component of type: " + typeName + 
             ". Use withMutable() instead of withReadOnly() if you need to modify this component.");
     }

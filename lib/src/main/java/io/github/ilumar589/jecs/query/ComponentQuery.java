@@ -383,19 +383,30 @@ public final class ComponentQuery {
      */
     @SuppressWarnings("unchecked")
     public <A> void modify(Class<A> typeA, Function<A, A> modifier) {
+        // Remember original state to restore after operation
+        boolean wasMutable = mutableTypes.contains(typeA);
+        boolean wasIncluded = includedTypes.contains(typeA);
+        
         // Temporarily mark as mutable for the operation
         mutableTypes.add(typeA);
         includedTypes.add(typeA);
         
-        forEach(wrappers -> {
-            Mutable<A> mutableA = (Mutable<A>) wrappers[0];
-            A current = mutableA.get();
-            A newValue = modifier.apply(current);
-            mutableA.set(newValue);
-        }, typeA);
-        
-        // Remove the temporary mutable marking
-        mutableTypes.remove(typeA);
+        try {
+            forEach(wrappers -> {
+                Mutable<A> mutableA = (Mutable<A>) wrappers[0];
+                A current = mutableA.get();
+                A newValue = modifier.apply(current);
+                mutableA.set(newValue);
+            }, typeA);
+        } finally {
+            // Restore original state
+            if (!wasMutable) {
+                mutableTypes.remove(typeA);
+            }
+            if (!wasIncluded) {
+                includedTypes.remove(typeA);
+            }
+        }
     }
 
     /**
@@ -409,21 +420,32 @@ public final class ComponentQuery {
      */
     @SuppressWarnings("unchecked")
     public <A> void modifyIf(Class<A> typeA, Predicate<A> predicate, Function<A, A> modifier) {
+        // Remember original state to restore after operation
+        boolean wasMutable = mutableTypes.contains(typeA);
+        boolean wasIncluded = includedTypes.contains(typeA);
+        
         // Temporarily mark as mutable for the operation
         mutableTypes.add(typeA);
         includedTypes.add(typeA);
         
-        forEach(wrappers -> {
-            Mutable<A> mutableA = (Mutable<A>) wrappers[0];
-            A current = mutableA.get();
-            if (predicate.test(current)) {
-                A newValue = modifier.apply(current);
-                mutableA.set(newValue);
+        try {
+            forEach(wrappers -> {
+                Mutable<A> mutableA = (Mutable<A>) wrappers[0];
+                A current = mutableA.get();
+                if (predicate.test(current)) {
+                    A newValue = modifier.apply(current);
+                    mutableA.set(newValue);
+                }
+            }, typeA);
+        } finally {
+            // Restore original state
+            if (!wasMutable) {
+                mutableTypes.remove(typeA);
             }
-        }, typeA);
-        
-        // Remove the temporary mutable marking
-        mutableTypes.remove(typeA);
+            if (!wasIncluded) {
+                includedTypes.remove(typeA);
+            }
+        }
     }
 
     // ==================== Results Operations ====================
